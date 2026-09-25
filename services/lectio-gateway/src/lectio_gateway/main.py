@@ -64,6 +64,16 @@ async def auth_status(request: Request) -> dict[str, object]:
     return _manager(request).status().model_dump(mode="json")
 
 
+@app.get("/auth/diagnostics", include_in_schema=False)
+async def auth_diagnostics(request: Request) -> dict[str, bool]:
+    session = _manager(request).session
+    return {
+        "student_id_available": (
+            session is not None and session.student_id is not None
+        )
+    }
+
+
 @app.post("/auth/start", status_code=status.HTTP_202_ACCEPTED)
 async def auth_start(request: Request) -> dict[str, object]:
     _check_same_host(request)

@@ -1958,3 +1958,26 @@ This section is the canonical running record for agent evidence, completed work,
 1. Start Milestone 3: implement normalized gateway data endpoints, per-source sync/cache state, stale-data fallback, and auth-expiry behavior.
 2. Preserve the current limitation explicitly: assignments/homework need a supported student-ID source before they can be made available for this account.
 3. Continue with Home Assistant integration, display model/rendering, device API, firmware, USB provisioning, Tailnet operations, and the remaining hardening/CI scope.
+
+## 2026-09-25 — Add redacted student-ID availability check
+
+### Evidence and findings
+
+- The new `GET /auth/diagnostics` response contains only `student_id_available: true|false`; it never serializes the identifier or session cookies and is hidden from the OpenAPI schema.
+- Synthetic tests confirmed both `true` and `false` responses and verified that the synthetic student ID and cookie value are absent from the response body.
+- After rebuilding and recreating the gateway, the live check returned `false` while the separately filtered auth state remained `AUTHENTICATED`. The saved session is valid but currently has no student ID. No session file contents, cookie values, or identifier values were read or printed.
+
+### Tasks completed
+
+- Added the redacted diagnostics route and tests for available/missing ID cases.
+- Rebuilt and restarted only the gateway; its persisted session remained authenticated.
+
+### How it went
+
+- The full repository suite passed: `56 passed in 2.74s`; Ruff selected rules and Compose configuration passed; the gateway image built successfully; `git diff --check` passed.
+- The check resolved the uncertainty without exposing the ID. Student-specific resources still require a supported source to capture the user's own ID.
+
+### Next steps
+
+1. If student-specific resources are needed, start a fresh temporary browser login and capture the user's own individual schedule URL only if it exposes `elevid`.
+2. Do not scrape or query the school-wide student directory; preserve the redacted boolean-only diagnostic.
