@@ -14,7 +14,7 @@ from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, ValidationError
 
-from lectio_gateway.lectio.client import LectioClient
+from lectio_gateway.lectio.client import LectioClient, derive_cancellations
 from lectio_gateway.lectio.errors import (
     LectioAdapterError,
     LectioResponseChanged,
@@ -33,12 +33,7 @@ _LOGGER = logging.getLogger(__name__)
 _UTC = timezone.utc
 _COPENHAGEN = ZoneInfo("Europe/Copenhagen")
 _SOURCES = ("schedule", "assignments", "homework", "cancellations")
-_METHODS = {
-    "schedule": "get_schedule",
-    "assignments": "get_assignments",
-    "homework": "get_homework",
-    "cancellations": "get_cancellations",
-}
+_METHODS = {"schedule", "assignments", "homework", "cancellations"}
 _ITEM_MODELS: dict[str, type[BaseModel]] = {
     "schedule": LectioLesson,
     "assignments": LectioAssignment,
@@ -160,6 +155,8 @@ class LectioDataService:
         if source not in _METHODS:
             raise ValueError("Unknown Lectio source")
         start, end = self._normalize_range(start, end)
+        if source in {"assignments", "homework"}:
+            start, end = _canonical_day_range(start, end)
         now = self._now()
         session = self._session_provider()
         if session is None:
@@ -210,6 +207,24 @@ class LectioDataService:
                 active_session, client, start, end
             )
 
+        if source == "cancellations":
+            try:
+                client = self._client_factory(session)
+            except Exception as exc:
+                _LOGGER.warning(
+                    "Lectio cancellation client setup failed (%s)",
+                    type(exc).__name__,
+                )
+                client = None
+            lessons, status = await self._get_schedule_range(
+                session, client, start, end
+            )
+            self._require_current_owner(owner)
+            items = derive_cancellations(lessons)
+            self._statuses[(source, owner)] = status
+            await self._persist_cache()
+            return items, status
+
         key = (source, owner, start.isoformat(), end.isoformat())
         lock = self._locks.setdefault(key, asyncio.Lock())
         async with lock:
@@ -239,11 +254,74 @@ class LectioDataService:
                 and last_success is not None
                 and (now - last_success).total_seconds() < self._ttl_seconds
             ):
+                if source == "homework":
+                    try:
+                        client = self._client_factory(session)
+                    except Exception as exc:
+                        _LOGGER.warning(
+                            "Lectio homework client setup failed (%s)",
+                            type(exc).__name__,
+                        )
+                        client = None
+                    try:
+                        _lessons, dependency_status = await self._get_schedule_range(
+                            session, client, start, end
+                        )
+                    except LectioSourceUnavailable as exc:
+                        self._require_current_owner(owner)
+                        return await self._record_failure(
+                            key,
+                            source,
+                            entry,
+                            now,
+                            state="stale",
+                            error=str(exc),
+                        )
+                    reported = _combine_dependency_status(
+                        entry.status, dependency_status
+                    )
+                    self._statuses[(source, owner)] = reported
+                    await self._persist_cache()
+                    return entry.items, reported
                 return entry.items, entry.status
 
+            dependency_status = None
+            homework_lessons: list[LectioLesson] = []
+            client = None
+            if source == "homework":
+                try:
+                    client = self._client_factory(session)
+                except Exception as exc:
+                    _LOGGER.warning(
+                        "Lectio homework client setup failed (%s)", type(exc).__name__
+                    )
+                try:
+                    homework_lessons, dependency_status = (
+                        await self._get_schedule_range(
+                            session, client, start, end
+                        )
+                    )
+                except LectioSourceUnavailable as exc:
+                    self._require_current_owner(owner)
+                    return await self._record_failure(
+                        key,
+                        source,
+                        entry,
+                        now,
+                        state="stale" if entry else "error",
+                        error=str(exc),
+                    )
+
             try:
-                client = self._client_factory(session)
-                items = await getattr(client, _METHODS[source])(start, end)
+                if source == "homework":
+                    if client is None:
+                        raise LectioAdapterError("Lectio client is unavailable")
+                    items = await client.get_homework(
+                        start, end, lessons=homework_lessons
+                    )
+                else:
+                    client = self._client_factory(session)
+                    items = await client.get_assignments(start, end)
                 model = _ITEM_MODELS[source]
                 if not isinstance(items, list) or any(
                     not isinstance(item, model) for item in items
@@ -266,6 +344,7 @@ class LectioDataService:
                         now,
                         state="expired",
                         error="Lectio session expired. Please sign in again.",
+                        dependency_status=dependency_status,
                     )
                 except LectioSourceUnavailable as exc:
                     raise LectioAuthenticationRequired(
@@ -280,6 +359,7 @@ class LectioDataService:
                     now,
                     state="stale" if entry else "error",
                     error="Lectio returned a response the gateway could not read.",
+                    dependency_status=dependency_status,
                 )
             except LectioAdapterError:
                 self._require_current_owner(owner)
@@ -290,6 +370,7 @@ class LectioDataService:
                     now,
                     state="stale" if entry else "error",
                     error="The Lectio source request failed.",
+                    dependency_status=dependency_status,
                 )
             except Exception as exc:
                 self._require_current_owner(owner)
@@ -303,6 +384,7 @@ class LectioDataService:
                     now,
                     state="stale" if entry else "error",
                     error="The Lectio source request failed.",
+                    dependency_status=dependency_status,
                 )
 
             status = LectioSyncStatus(
@@ -312,11 +394,16 @@ class LectioDataService:
                 is_stale=False,
             )
             self._entries[key] = _CacheEntry(source, owner, start, end, items, status)
-            self._statuses[(source, owner)] = status
+            reported_status = (
+                _combine_dependency_status(status, dependency_status)
+                if dependency_status is not None
+                else status
+            )
+            self._statuses[(source, owner)] = reported_status
             self._prune_cache()
             await self._persist_cache()
             self._require_current_owner(owner)
-            return items, status
+            return items, reported_status
 
     async def _get_schedule_range(
         self,
@@ -536,6 +623,7 @@ class LectioDataService:
         *,
         state: Literal["stale", "expired", "error"],
         error: str,
+        dependency_status: LectioSyncStatus | None = None,
     ) -> tuple[list[BaseModel], LectioSyncStatus]:
         has_stale_data = entry is not None
         status = LectioSyncStatus(
@@ -548,7 +636,12 @@ class LectioDataService:
             error=error,
         )
         owner = key[1]
-        self._statuses[(source, owner)] = status
+        reported_status = (
+            _combine_dependency_status(status, dependency_status)
+            if dependency_status is not None
+            else status
+        )
+        self._statuses[(source, owner)] = reported_status
         if entry is not None:
             self._entries[key] = _CacheEntry(
                 source, owner, entry.start, entry.end, entry.items, status
@@ -556,7 +649,7 @@ class LectioDataService:
         await self._persist_cache()
         if entry is not None:
             self._require_current_owner(owner)
-            return entry.items, status
+            return entry.items, reported_status
         raise LectioSourceUnavailable(error)
 
     def _require_current_owner(self, owner: str) -> None:
@@ -794,6 +887,60 @@ def _iso_week_bounds_utc(iso_year: int, iso_week: int) -> tuple[datetime, dateti
         tzinfo=_COPENHAGEN,
     ).astimezone(_UTC)
     return start, end
+
+
+def _canonical_day_range(
+    start: datetime, end: datetime
+) -> tuple[datetime, datetime]:
+    """Align a source query to Copenhagen midnight boundaries."""
+    local_start = start.astimezone(_COPENHAGEN)
+    local_end = end.astimezone(_COPENHAGEN)
+    end_day = local_end.date()
+    if any((local_end.hour, local_end.minute, local_end.second, local_end.microsecond)):
+        end_day += timedelta(days=1)
+    canonical_start = datetime(
+        local_start.year, local_start.month, local_start.day, tzinfo=_COPENHAGEN
+    )
+    canonical_end = datetime(
+        end_day.year, end_day.month, end_day.day, tzinfo=_COPENHAGEN
+    )
+    return canonical_start.astimezone(_UTC), canonical_end.astimezone(_UTC)
+
+
+def _combine_dependency_status(
+    source_status: LectioSyncStatus,
+    dependency_status: LectioSyncStatus,
+) -> LectioSyncStatus:
+    has_source_data = source_status.last_successful_sync is not None
+    attempts = [
+        attempt
+        for attempt in (
+            source_status.last_attempt_at,
+            dependency_status.last_attempt_at,
+        )
+        if attempt is not None
+    ]
+    successful = []
+    if has_source_data:
+        successful.append(source_status.last_successful_sync)
+        if dependency_status.last_successful_sync is not None:
+            successful.append(dependency_status.last_successful_sync)
+
+    fully_fresh = (
+        source_status.state == "valid"
+        and not source_status.is_stale
+        and dependency_status.state == "valid"
+        and not dependency_status.is_stale
+    )
+    state = "valid" if fully_fresh else ("stale" if has_source_data else source_status.state)
+    error = source_status.error or dependency_status.error
+    return LectioSyncStatus(
+        state=state,
+        last_attempt_at=max(attempts, default=None),
+        last_successful_sync=min(successful, default=None),
+        is_stale=has_source_data and not fully_fresh,
+        error=error,
+    )
 
 
 def _aggregate_schedule_status(

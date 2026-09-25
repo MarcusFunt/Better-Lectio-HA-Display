@@ -16,7 +16,10 @@ from lectio_gateway.data_service import (
 from lectio_gateway.lectio.errors import LectioSessionExpired
 from lectio_gateway.lectio.models import (
     AuthenticatedLectioSession,
+    LectioAssignment,
+    LectioCancellation,
     LectioCookie,
+    LectioHomework,
     LectioLesson,
     LectioSyncStatus,
 )
@@ -83,6 +86,72 @@ class _FailingScheduleClient:
 
     async def get_schedule_week(self, iso_year, iso_week):
         raise RuntimeError("schedule unavailable")
+
+
+class _SharedScheduleClient:
+    def __init__(self):
+        self.lessons = [
+            make_lesson(),
+            make_lesson().model_copy(
+                update={
+                    "id": "cancelled-lesson",
+                    "status": "cancelled",
+                    "start": datetime(2026, 9, 25, 10, 0, tzinfo=timezone.utc),
+                    "end": datetime(2026, 9, 25, 10, 45, tzinfo=timezone.utc),
+                }
+            ),
+        ]
+        self.schedule_week_calls = []
+        self.homework_calls = []
+        self.cancellation_inputs = []
+        self.schedule_failure = None
+
+    async def get_schedule_week(self, iso_year, iso_week):
+        self.schedule_week_calls.append((iso_year, iso_week))
+        if self.schedule_failure is not None:
+            raise self.schedule_failure
+        return self.lessons
+
+    async def get_homework(self, start, end, *, lessons):
+        self.homework_calls.append((start, end, [lesson.id for lesson in lessons]))
+        return [LectioHomework(id="homework-1", description="Læs kapitel 2")]
+
+    async def get_cancellations(self, lessons):
+        lesson_ids = [lesson.id for lesson in lessons]
+        self.cancellation_inputs.append(lesson_ids)
+        return [
+            LectioCancellation(
+                id=lesson.id,
+                original_lesson=lesson,
+                start=lesson.start,
+                end=lesson.end,
+                subject=lesson.subject,
+                teacher=lesson.teacher,
+                room=lesson.room,
+                reason=lesson.details,
+                details=lesson.details,
+                source_url=lesson.source_url,
+            )
+            for lesson in lessons
+            if lesson.status == "cancelled"
+        ]
+
+
+class _DayRangeClient:
+    def __init__(self):
+        self.assignment_ranges = []
+        self.homework_ranges = []
+
+    async def get_schedule_week(self, iso_year, iso_week):
+        return []
+
+    async def get_assignments(self, start, end):
+        self.assignment_ranges.append((start, end))
+        return [LectioAssignment(id="assignment-1", title="Essay")]
+
+    async def get_homework(self, start, end, *, lessons):
+        self.homework_ranges.append((start, end))
+        return []
 
 
 def test_source_results_are_cached_until_the_freshness_window_expires(tmp_path):
@@ -690,3 +759,159 @@ def test_expired_request_from_old_session_does_not_expire_a_new_session(tmp_path
     manager = asyncio.run(run())
 
     assert manager.status().state == AuthState.AUTHENTICATED
+
+
+def test_homework_and_cancellations_reuse_schedule_week_pages(tmp_path):
+    async def run():
+        client = _SharedScheduleClient()
+        session = make_session()
+        service = LectioDataService(
+            session_provider=lambda: session,
+            cache_path=Path(tmp_path) / "lectio-cache.json",
+            client_factory=lambda active_session: client,
+        )
+        await service.initialize()
+
+        homework = await service.get_source("homework", START, END)
+        cancellations = await service.get_source("cancellations", START, END)
+        schedule = await service.get_source("schedule", START, END)
+        return client, homework, cancellations, schedule
+
+    client, homework, cancellations, schedule = asyncio.run(run())
+    expected_week = START.astimezone(COPENHAGEN).date().isocalendar()[:2]
+    expected_range = (
+        datetime(2026, 9, 25, tzinfo=COPENHAGEN).astimezone(timezone.utc),
+        datetime(2026, 9, 27, tzinfo=COPENHAGEN).astimezone(timezone.utc),
+    )
+
+    assert client.schedule_week_calls == [expected_week]
+    assert client.homework_calls == [
+        (expected_range[0], expected_range[1], ["lesson-1", "cancelled-lesson"])
+    ]
+    assert [item.id for item in homework[0]] == ["homework-1"]
+    assert [item.id for item in cancellations[0]] == ["cancelled-lesson"]
+    assert [item.id for item in schedule[0]] == ["lesson-1", "cancelled-lesson"]
+
+
+def test_homework_sync_is_stale_when_schedule_dependency_is_stale(tmp_path):
+    async def run():
+        now = [datetime(2026, 9, 25, tzinfo=timezone.utc)]
+        client = _SharedScheduleClient()
+        session = make_session()
+        service = LectioDataService(
+            session_provider=lambda: session,
+            cache_path=Path(tmp_path) / "lectio-cache.json",
+            client_factory=lambda active_session: client,
+            ttl_seconds=60,
+            clock=lambda: now[0],
+        )
+        await service.initialize()
+        await service.get_source("homework", START, END)
+        now[0] += timedelta(seconds=61)
+        client.schedule_failure = RuntimeError("schedule temporarily unavailable")
+        homework = await service.get_source("homework", START, END)
+        return client, homework
+
+    client, homework = asyncio.run(run())
+    expected_week = START.astimezone(COPENHAGEN).date().isocalendar()[:2]
+
+    assert client.schedule_week_calls == [expected_week, expected_week]
+    assert [item.id for item in homework[0]] == ["homework-1"]
+    assert homework[1].state == "stale"
+    assert homework[1].is_stale is True
+
+
+def test_assignments_ranges_are_day_aligned_in_copenhagen(tmp_path):
+    async def run():
+        client = _DayRangeClient()
+        session = make_session()
+        service = LectioDataService(
+            session_provider=lambda: session,
+            cache_path=Path(tmp_path) / "lectio-cache.json",
+            client_factory=lambda active_session: client,
+        )
+        await service.initialize()
+        start = datetime(2026, 3, 28, 15, 8, tzinfo=COPENHAGEN)
+        end = datetime(2026, 3, 30, 0, 0, tzinfo=COPENHAGEN)
+        await service.get_source("assignments", start, end)
+        await service.get_source(
+            "assignments",
+            datetime(2026, 3, 28, 19, 13, tzinfo=COPENHAGEN),
+            end,
+        )
+        return client
+
+    client = asyncio.run(run())
+    expected_range = (
+        datetime(2026, 3, 28, tzinfo=COPENHAGEN).astimezone(timezone.utc),
+        datetime(2026, 3, 30, tzinfo=COPENHAGEN).astimezone(timezone.utc),
+    )
+
+    assert client.assignment_ranges == [expected_range]
+    assert (expected_range[1] - expected_range[0]).total_seconds() == 47 * 3600
+
+
+def test_homework_ranges_are_day_aligned_in_copenhagen(tmp_path):
+    async def run():
+        client = _DayRangeClient()
+        session = make_session()
+        service = LectioDataService(
+            session_provider=lambda: session,
+            cache_path=Path(tmp_path) / "lectio-cache.json",
+            client_factory=lambda active_session: client,
+        )
+        await service.initialize()
+        start = datetime(2026, 3, 28, 15, 8, tzinfo=COPENHAGEN)
+        end = datetime(2026, 3, 30, 0, 0, tzinfo=COPENHAGEN)
+        await service.get_source("homework", start, end)
+        await service.get_source(
+            "homework",
+            datetime(2026, 3, 28, 19, 13, tzinfo=COPENHAGEN),
+            end,
+        )
+        return client
+
+    client = asyncio.run(run())
+    expected_range = (
+        datetime(2026, 3, 28, tzinfo=COPENHAGEN).astimezone(timezone.utc),
+        datetime(2026, 3, 30, tzinfo=COPENHAGEN).astimezone(timezone.utc),
+    )
+
+    assert client.homework_ranges == [expected_range]
+    assert (expected_range[1] - expected_range[0]).total_seconds() == 47 * 3600
+
+
+def test_schedule_range_keeps_original_half_open_filter_after_week_composition(
+    tmp_path,
+):
+    async def run():
+        client = FakeLectioClient()
+        client.schedule_items = [
+            make_lesson().model_copy(
+                update={
+                    "id": "ends-at-start",
+                    "start": START - timedelta(hours=1),
+                    "end": START,
+                }
+            ),
+            make_lesson(),
+            make_lesson().model_copy(
+                update={
+                    "id": "starts-at-end",
+                    "start": END,
+                    "end": END + timedelta(hours=1),
+                }
+            ),
+        ]
+        session = make_session()
+        service = LectioDataService(
+            session_provider=lambda: session,
+            cache_path=Path(tmp_path) / "lectio-cache.json",
+            client_factory=lambda active_session: client,
+        )
+        await service.initialize()
+        return await service.get_source("schedule", START, END)
+
+    items, _status = asyncio.run(run())
+
+    assert [item.id for item in items] == ["lesson-1"]

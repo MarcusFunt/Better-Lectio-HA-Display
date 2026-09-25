@@ -2518,13 +2518,13 @@ Task 2 test coverage also includes `test_client_factory_failure_keeps_week_lkg`,
 
 **Interfaces:** Refactor homework to `async def get_homework(self, start: datetime, end: datetime, *, lessons: Sequence[LectioLesson]) -> list[LectioHomework]` and cancellation derivation to `async def get_cancellations(self, lessons: Sequence[LectioLesson]) -> list[LectioCancellation]`. Neither method fetches schedule. `LectioDataService.get_source` calls `_get_schedule_range(...)` from Task 2 and passes those lessons into both operations.
 
-- [ ] Add failing tests `test_homework_and_cancellations_reuse_schedule_week_pages`, `test_homework_sync_is_stale_when_schedule_dependency_is_stale`, and API coverage proving public item shape and schedule half-open filtering remain unchanged.
-- [ ] Add failing tests `test_assignments_ranges_are_day_aligned_in_copenhagen` and `test_homework_ranges_are_day_aligned_in_copenhagen`; cover an already-aligned exclusive end and a range crossing the DST offset change.
-- [ ] Run the focused adapter, data-service, and gateway API cases to confirm the old independent schedule calls and exact-minute range keys violate the assertions.
-- [ ] Make `assignments` and `homework` fetch/cache keys use local-midnight start and exclusive next-midnight end, preserving that day-aligned range for the upstream call.
-- [ ] Route schedule through the week store; route homework through the day cache plus the same shared schedule pages; derive cancellations from those pages and reuse the schedule freshness status. Preserve generic sanitized error behavior and the existing API envelope.
-- [ ] Run all gateway tests with `python -m pytest -q services/lectio-gateway/tests`; require all routes, cache, adapter, and auth regressions to pass.
-- [ ] Commit endpoint composition and day-range canonicalization after the gateway suite passes.
+- [x] Add failing tests `test_homework_and_cancellations_reuse_schedule_week_pages` and `test_homework_sync_is_stale_when_schedule_dependency_is_stale`; retain gateway API coverage for the public item envelope and add half-open filtering coverage after week composition.
+- [x] Add failing tests `test_assignments_ranges_are_day_aligned_in_copenhagen` and `test_homework_ranges_are_day_aligned_in_copenhagen`; cover an already-aligned exclusive end and a range crossing the DST offset change.
+- [x] Run the focused adapter, data-service, and gateway API cases to confirm the old independent schedule calls and exact-minute range keys violate the assertions.
+- [x] Make `assignments` and `homework` fetch/cache keys use local-midnight start and exclusive next-midnight end, preserving that day-aligned range for the upstream call.
+- [x] Route schedule through the week store; route homework through the day cache plus the same shared schedule pages; derive cancellations from those pages and reuse the schedule freshness status. Preserve generic sanitized error behavior and the existing API envelope.
+- [x] Run all gateway tests with `python -m pytest -q services/lectio-gateway/tests`; require all routes, cache, adapter, and auth regressions to pass.
+- [x] Commit endpoint composition and day-range canonicalization after the gateway suite passes.
 
 ### Task 4: Keep HA entities available after a later poll failure
 
@@ -2609,6 +2609,9 @@ Task 2 test coverage also includes `test_client_factory_failure_keeps_week_lkg`,
 - Task 1 completed RED→GREEN. The new adapter test failed before implementation with the expected missing `get_schedule_week` attribute, then passed after the method was added. Focused test: `1 passed, 20 deselected`; full adapter suite: `21 passed`.
 - Task 1 commit: `908d247` (`feat: expose Lectio schedule week fetch`).
 - Task 2 RED→GREEN: eight cache/range tests failed before implementation as expected; after adding weekly page persistence and fallback, those eight passed. The additional client-factory LKG test was also verified GREEN. Full data-service suite: `21 passed`; repository `make lint` passed. A direct default Ruff invocation reported rules outside the repository's configured CI selection; the CI-matched lint command is the recorded lint result.
+- Task 2 commit: `32d9a5d` (`feat: cache Lectio schedule by ISO week`).
+- Task 3 RED→GREEN: the shared schedule/homework/cancellation test, stale dependency test, and both day-range tests failed against range-keyed/independent-fetch behavior; the adapter interface test failed before accepting injected lessons. Implementation now calls Lectio once per weekly cache page, passes cached lessons to homework normalization, derives cancellations locally, aligns assignments/homework queries to Copenhagen midnights, and includes dependency freshness in homework sync status. The half-open regression fixture was corrected after its first draft accidentally started a lesson at the included range boundary.
+- Task 3 verification: gateway API suite `7 passed`, adapter suite `21 passed`, and data-service suite `26 passed`. Full repository `make test`: `138 passed`; `make lint`: all configured checks passed.
 
 ### Next steps
 

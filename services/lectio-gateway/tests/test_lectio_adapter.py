@@ -379,10 +379,12 @@ def test_client_normalizes_homework_and_cancellations_from_fixtures():
     client = LectioClient(make_session(), sdk_client=sdk)
     start = datetime(2026, 9, 21, tzinfo=COPENHAGEN)
     end = datetime(2026, 9, 23, tzinfo=COPENHAGEN)
-    homework = asyncio.run(client.get_homework(start, end))
-    cancellations = asyncio.run(client.get_cancellations(start, end))
+    lessons = asyncio.run(client.get_schedule(start, end))
+    homework = asyncio.run(client.get_homework(start, end, lessons=lessons))
+    cancellations = asyncio.run(client.get_cancellations(lessons))
     assert homework[0].target_lesson_start == datetime(
         2026, 9, 21, 8, 15, tzinfo=COPENHAGEN
     )
     assert cancellations[0].original_lesson.source_id == "9002"
     assert cancellations[0].reason == "Lærer fraværende"
+    assert len(http.requested) == 1

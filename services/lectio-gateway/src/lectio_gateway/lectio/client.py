@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import json
+from collections.abc import Sequence
 from datetime import datetime, timedelta, timezone
 from threading import RLock
 from typing import Any
@@ -30,6 +31,28 @@ from lectio_gateway.lectio.parsers import (
 )
 
 _COPENHAGEN = ZoneInfo("Europe/Copenhagen")
+
+
+def derive_cancellations(
+    lessons: Sequence[LectioLesson],
+) -> list[LectioCancellation]:
+    """Build cancellation items from already-fetched normalized schedule lessons."""
+    return [
+        LectioCancellation(
+            id=lesson.id,
+            original_lesson=lesson,
+            start=lesson.start,
+            end=lesson.end,
+            subject=lesson.subject,
+            teacher=lesson.teacher,
+            room=lesson.room,
+            reason=lesson.details,
+            details=lesson.details,
+            source_url=lesson.source_url,
+        )
+        for lesson in lessons
+        if lesson.status == "cancelled"
+    ]
 
 
 class LectioClient:
@@ -282,9 +305,14 @@ class LectioClient:
     ) -> list[LectioAssignment]:
         return await asyncio.to_thread(self._get_assignments, start, end)
 
-    async def get_homework(self, start: datetime, end: datetime) -> list[LectioHomework]:
+    async def get_homework(
+        self,
+        start: datetime,
+        end: datetime,
+        *,
+        lessons: Sequence[LectioLesson],
+    ) -> list[LectioHomework]:
         start, end = self._validate_range(start, end)
-        lessons = await self.get_schedule(start, end)
         rows = await asyncio.to_thread(self._invoke_sdk, "lektier")
         items = normalize_homework(
             rows,
@@ -297,25 +325,6 @@ class LectioClient:
         ]
 
     async def get_cancellations(
-        self, start: datetime, end: datetime
+        self, lessons: Sequence[LectioLesson]
     ) -> list[LectioCancellation]:
-        lessons = await self.get_schedule(start, end)
-        cancellations = []
-        for lesson in lessons:
-            if lesson.status != "cancelled":
-                continue
-            cancellations.append(
-                LectioCancellation(
-                    id=lesson.id,
-                    original_lesson=lesson,
-                    start=lesson.start,
-                    end=lesson.end,
-                    subject=lesson.subject,
-                    teacher=lesson.teacher,
-                    room=lesson.room,
-                    reason=lesson.details,
-                    details=lesson.details,
-                    source_url=lesson.source_url,
-                )
-            )
-        return cancellations
+        return derive_cancellations(lessons)
