@@ -1981,3 +1981,30 @@ This section is the canonical running record for agent evidence, completed work,
 
 1. If student-specific resources are needed, start a fresh temporary browser login and capture the user's own individual schedule URL only if it exposes `elevid`.
 2. Do not scrape or query the school-wide student directory; preserve the redacted boolean-only diagnostic.
+
+## 2026-09-25 — Add manual Lectio student-ID configuration
+
+### Evidence and findings
+
+- The user found their own student ID and asked how to configure it manually. No ID was shared with or entered by the agent.
+- The gateway's Lectio client validates the supplied ID by requesting its student schedule with the stored session and recognizing the expected schedule page structure. A successful response demonstrates schedule access through that session; it does not independently establish identity ownership.
+- Before changing the service, recursively read the repository Markdown context and inspected the gateway auth manager, Lectio client, session model, and existing gateway tests.
+
+### Tasks completed
+
+- Added a local numeric ID field to `/auth/browser` and a same-origin `POST /auth/student-id` action. The browser clears the field after submission and displays only a generic outcome.
+- Added gateway validation and private session persistence. The manager saves the ID only after Lectio accepts the schedule request. Rejected IDs do not replace the stored session.
+- Redacted `student_id` from `/auth/status` and auth action responses; those responses expose only `student_id_available`.
+- Added synthetic tests for accepted and rejected IDs, session persistence, and absence of the identifier and cookie values from responses.
+- Rebuilt and recreated only the gateway container, preserving the persisted session volume.
+
+### How it went
+
+- The full repository suite passed: `58 passed in 2.54s`. Ruff selected rules, Compose configuration, and `git diff --check` passed.
+- The gateway image built and the recreated container is healthy. Live checks showed `AUTHENTICATED`, `student_id_available: false`, the manual entry present on `/auth/browser`, and no `student_id` property in `/auth/status`.
+- Tests mocked Lectio's schedule validation. The user's actual ID has not been entered, so live validation of that ID and student-specific resources remain unverified.
+
+### Next steps
+
+1. The user can enter their own ID at `http://localhost:8000/auth/browser` and select **Save and check**; the page reports success without returning the number.
+2. Once the boolean reports that an ID is available, validate student-specific resources against the user's Lectio session.

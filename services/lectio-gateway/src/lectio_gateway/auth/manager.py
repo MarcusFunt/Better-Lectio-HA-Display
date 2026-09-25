@@ -34,6 +34,22 @@ class AuthFlowInProgress(RuntimeError):
     """An authentication flow is already active."""
 
 
+class AuthSessionUnavailable(RuntimeError):
+    """No stored Lectio session is available to verify a student ID."""
+
+
+class StudentIdRejected(RuntimeError):
+    """Lectio did not accept the student ID with the stored session."""
+
+
+class StudentIdVerificationUnavailable(RuntimeError):
+    """Lectio could not verify a student ID because of an upstream failure."""
+
+
+class AuthSessionPersistenceFailed(RuntimeError):
+    """A verified session could not be persisted."""
+
+
 class AuthStatus(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -140,6 +156,34 @@ class AuthManager:
             return self._status
         self._set_state(AuthState.LOGIN_REQUIRED, error=None)
         return self._status
+
+    async def configure_student_id(self, student_id: str) -> None:
+        """Validate and persist an explicitly supplied student ID."""
+        async with self._lock:
+            if not student_id.isascii() or not student_id.isdigit():
+                raise StudentIdRejected("Student ID must contain only digits")
+            if self._task is not None and not self._task.done():
+                raise AuthFlowInProgress("Authentication is already in progress")
+            if self.session is None:
+                raise AuthSessionUnavailable("No Lectio session is available")
+
+            candidate = self.session.model_copy(update={"student_id": student_id})
+            try:
+                valid = await LectioClient(candidate).validate_session()
+            except Exception as exc:
+                raise StudentIdVerificationUnavailable from exc
+            if not valid:
+                raise StudentIdRejected("Lectio rejected the supplied student ID")
+
+            verified = candidate.model_copy(
+                update={"last_verified_at": datetime.now(timezone.utc)}
+            )
+            try:
+                await asyncio.to_thread(self._save_session, verified)
+            except OSError as exc:
+                raise AuthSessionPersistenceFailed from exc
+            self.session = verified
+            self._set_state(AuthState.AUTHENTICATED, error=None)
 
     async def shutdown(self) -> None:
         task = self._task

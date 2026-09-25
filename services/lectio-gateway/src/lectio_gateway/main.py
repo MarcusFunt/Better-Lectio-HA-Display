@@ -1,5 +1,6 @@
 import html
 import os
+import re
 from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import urlparse
@@ -7,7 +8,15 @@ from urllib.parse import urlparse
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from lectio_gateway.auth.manager import AuthFlowInProgress, AuthManager
+from lectio_gateway.auth.manager import (
+    AuthFlowInProgress,
+    AuthManager,
+    AuthSessionPersistenceFailed,
+    AuthSessionUnavailable,
+    AuthStatus,
+    StudentIdRejected,
+    StudentIdVerificationUnavailable,
+)
 
 
 @asynccontextmanager
@@ -43,6 +52,12 @@ def _manager(request: Request) -> AuthManager:
     return request.app.state.auth_manager
 
 
+def _status_payload(current: AuthStatus) -> dict[str, object]:
+    payload = current.model_dump(mode="json", exclude={"student_id"})
+    payload["student_id_available"] = current.student_id is not None
+    return payload
+
+
 def _check_same_host(request: Request) -> None:
     origin = request.headers.get("origin")
     if origin and urlparse(origin).netloc.casefold() != request.headers.get("host", "").casefold():
@@ -61,7 +76,7 @@ async def home() -> RedirectResponse:
 
 @app.get("/auth/status")
 async def auth_status(request: Request) -> dict[str, object]:
-    return _manager(request).status().model_dump(mode="json")
+    return _status_payload(_manager(request).status())
 
 
 @app.get("/auth/diagnostics", include_in_schema=False)
@@ -81,21 +96,57 @@ async def auth_start(request: Request) -> dict[str, object]:
         current = await _manager(request).start()
     except AuthFlowInProgress as exc:
         raise HTTPException(status_code=409, detail="Authentication is already in progress") from exc
-    return current.model_dump(mode="json")
+    return _status_payload(current)
 
 
 @app.post("/auth/cancel")
 async def auth_cancel(request: Request) -> dict[str, object]:
     _check_same_host(request)
     current = await _manager(request).cancel()
-    return current.model_dump(mode="json")
+    return _status_payload(current)
 
 
 @app.post("/auth/logout")
 async def auth_logout(request: Request) -> dict[str, object]:
     _check_same_host(request)
     current = await _manager(request).logout()
-    return current.model_dump(mode="json")
+    return _status_payload(current)
+
+
+@app.post("/auth/student-id", include_in_schema=False)
+async def configure_student_id(request: Request) -> dict[str, bool]:
+    _check_same_host(request)
+    try:
+        body = await request.json()
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="Enter a numeric student ID.") from exc
+    student_id = body.get("student_id") if isinstance(body, dict) else None
+    if not isinstance(student_id, str) or re.fullmatch(r"[0-9]+", student_id) is None:
+        raise HTTPException(status_code=422, detail="Enter a numeric student ID.")
+
+    try:
+        await _manager(request).configure_student_id(student_id)
+    except (AuthFlowInProgress, AuthSessionUnavailable) as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="Complete Lectio sign-in before configuring a student ID.",
+        ) from exc
+    except StudentIdRejected as exc:
+        raise HTTPException(
+            status_code=422,
+            detail="Lectio could not use that ID with the current session. Check it and try again.",
+        ) from exc
+    except StudentIdVerificationUnavailable as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="Lectio could not verify the student ID right now. Try again later.",
+        ) from exc
+    except AuthSessionPersistenceFailed as exc:
+        raise HTTPException(
+            status_code=500,
+            detail="The verified student ID could not be saved. Try again.",
+        ) from exc
+    return {"student_id_available": True}
 
 
 @app.get("/auth/browser", response_class=HTMLResponse)
@@ -120,6 +171,13 @@ async def auth_browser(request: Request) -> HTMLResponse:
   <button onclick="action('/auth/start')">Start browser login</button>
   <button onclick="action('/auth/cancel')">Cancel</button>
   <button onclick="action('/auth/logout')">Log out</button>
+  <form id="student-id-form" onsubmit="configureStudentId(event)">
+    <label for="student-id">Your Lectio student ID</label>
+    <input id="student-id" name="student_id" type="text" inputmode="numeric" pattern="[0-9]+" autocomplete="off" required>
+    <button type="submit">Save and check</button>
+    <span id="student-id-result" aria-live="polite"></span>
+  </form>
+  <p>Enter your own ID. Lectio checks schedule access before it is saved; this page only reports whether an ID was saved.</p>
   <pre id="status">Loading status…</pre>
   <iframe id="browser-view" title="Temporary Lectio browser" src="about:blank" data-view-url="{view_url}" allow="clipboard-read; clipboard-write"></iframe>
   <script>
@@ -138,6 +196,28 @@ async def auth_browser(request: Request) -> HTMLResponse:
       const response = await fetch(path, {{ method: 'POST', headers: {{ 'Content-Type': 'application/json' }} }});
       if (!response.ok) document.getElementById('status').textContent = await response.text();
       await refresh();
+    }}
+    async function configureStudentId(event) {{
+      event.preventDefault();
+      const input = document.getElementById('student-id');
+      const result = document.getElementById('student-id-result');
+      result.textContent = 'Checking with Lectio…';
+      try {{
+        const response = await fetch('/auth/student-id', {{
+          method: 'POST',
+          headers: {{ 'Content-Type': 'application/json' }},
+          body: JSON.stringify({{ student_id: input.value }})
+        }});
+        const payload = await response.json();
+        result.textContent = response.ok
+          ? 'Student ID saved; Lectio accepted the schedule request.'
+          : payload.detail || 'The student ID could not be verified.';
+      }} catch {{
+        result.textContent = 'Lectio could not be reached. Try again later.';
+      }} finally {{
+        input.value = '';
+        await refresh();
+      }}
     }}
     refresh();
     setInterval(refresh, 2000);
