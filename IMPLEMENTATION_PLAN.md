@@ -1444,7 +1444,7 @@ This section is the canonical running record for agent evidence, completed work,
 - Work started from `main` at `233185c97f6972ca055d80e1c6095bfdb3c4f610`; the checkout was clean and the repository contains four Markdown files at its root. All Markdown files were read before implementation, as required by `AGENTS.md`.
 - The existing runtime was still the TRMNL/Pi prototype: root `trmnl_schedule/`, systemd units, a root `requirements.txt`, and `.env.example` entries for a Lectio username/password and raw ICS URL.
 - The baseline suite passed after installing the existing requirements into a local virtual environment: 14 tests passed.
-- `docker` and `docker-compose` are unavailable in the execution environment. Compose YAML and intended service/volume/port boundaries are covered by Python tests; actual `docker compose config` and image builds are delegated to the new GitHub Actions workflow and must be confirmed there.
+- GitHub Actions run `36120783896` for PR #3 passed tests, lint, `docker compose config`, and both service image builds. PR #3 merged as `43741de1c6b22060027f316916e3387d67560112`; the later Docker run recorded by Marcus also confirmed both containers healthy.
 
 ### Tasks completed
 
@@ -1460,16 +1460,16 @@ This section is the canonical running record for agent evidence, completed work,
 
 - TDD checks first failed because the Compose file and health modules were absent and because the old environment template still exposed the retired login/ICS settings. After the implementation, `make test` passed with 20 tests, `make lint` passed, and `pip wheel --no-deps` built both service packages successfully.
 - The first wheel build created setuptools `build/` files inside each service source tree; those generated files were removed from the change and `build/` is now ignored.
-- `git diff --check` passed. The new tests parse the Compose YAML and check that services remain unpublished, but they do not replace Docker Compose's own parser/build; those checks remain pending CI.
+- `git diff --check` passed. The new tests cover service/volume/port boundaries; GitHub Actions run `36120783896` passed Docker Compose's native parser and both image builds.
 - No live Lectio/MitID login, Home Assistant connection, Tailnet route, firmware build/flash, or physical display test was run. These behaviors are not part of Milestone 0.
 - **Ruling:** keep `AGENTS.md`, `ARCHITECTURE_AND_OPERATIONS.md`, and `IMPLEMENTATION_PLAN.md` at the repository root, although Milestone 0's approximate tree suggests moving architecture documents into `docs/`. `AGENTS.md` requires reading and updating those canonical root paths, and the earlier user instruction made `IMPLEMENTATION_PLAN.md` the single progress log. The `docs/` directory is created for later supporting documents. Cost if wrong: the repository differs from the approximate layout until the agent contract is deliberately revised.
 - **Ruling:** use `IMPLEMENTATION_PLAN.md` as the execution ledger rather than creating the separate SDD `progress.md`; `AGENTS.md` and the earlier user instruction require one canonical progress document. Cost if wrong: the SDD helper scripts cannot independently resume this milestone, but the repository's mandated evidence log remains complete.
-- Milestone 0 is implemented locally but is not yet recorded as complete because the actual Compose parser and image builds must pass in CI.
-- Final review: self-review (no subagent tool). The full staged diff was reviewed against Milestone 0 and `AGENTS.md`; no Critical or Important issues were found. Docker Compose parsing and image builds remain a CI gate.
+- Milestone 0 is complete. PR #3 merged as `43741de1c6b22060027f316916e3387d67560112`, and CI run `36120783896` passed its Docker Compose and image build checks.
+- Final review: self-review (no subagent tool). The scaffold diff was reviewed against Milestone 0 and `AGENTS.md`; no Critical or Important issues were found.
 
 ### Next steps
 
-1. Open a PR for this scaffold and verify that CI's Compose validation and image builds pass; fix any failures before marking Milestone 0 complete.
+1. Milestone 0's scaffold PR and hosted CI checks are complete.
 2. Proceed to Milestone 1: define the normalized Lectio domain models and adapter boundary, pin the selected `python-lectio` source, and add fixture-driven tests before implementing the Phase-1 browser flow.
 3. Keep the first real MitID/Lectio session test explicitly pending until it is run against the user's account.
 
@@ -1501,3 +1501,36 @@ This section is the canonical running record for agent evidence, completed work,
 1. Use `docker compose down` from the repository root when the local scaffold should be stopped; named volumes are retained by default.
 2. Continue with Milestone 1 to implement and validate the Lectio adapter before adding authentication and user-facing host access.
 3. Keep this local run separate from claims that the full display application is operational; only the health-only service scaffold is running.
+
+
+## 2026-09-25 — Milestone 1: Lectio session/data adapter
+
+### Evidence and findings
+
+- Started from the current `main` after the scaffold merge (`e92471a19065de35b37f7a32b75d3b1ae3aa6b2d`). The earlier scaffold CI run 36120783896 passed its Compose parser and both service image builds.
+- Selected and pinned `python-lectio==1.31.0`. PyPI lists 1.31.0 as the latest release; the upstream repository's main commit `002661bed43132129106f92a150897d7fe323f5c` has the same package version in `setup.py`. Sources: [PyPI 1.31.0](https://pypi.org/project/python-lectio/1.31.0/), [upstream source](https://github.com/BetterLectio/python-lectio/tree/main).
+- Upstream source inspection found that its cookie importer feeds a combined domain/path string to `requests` as the cookie domain. Its schedule parser also omits the day/date association when returning its normalized module list. The adapter locally reconstructs the cookie jar from browser attributes and parses the schedule day columns so lesson timestamps remain dated.
+- The upstream repository labels its license AGPL-3.0. The project has not assessed distribution or licensing implications.
+- Parser fixtures are synthetic, sanitized shapes based on upstream selectors/SDK outputs; they are not captured from the user's Lectio account. No account credentials or personal data are included.
+
+### Tasks completed
+
+- Added the exact `python-lectio` pin plus explicit HTTP, HTML parser, and timezone database dependencies to the gateway package.
+- Added typed Pydantic models for lessons, assignments, homework, cancellations, restorable authenticated sessions, cookies, and sync status. Cookie values use `SecretStr`; explicit serialization is required to reveal a session for persistence.
+- Added an async `LectioClient` boundary with session validation, date-range schedule queries, assignments/detail enrichment, homework-to-lesson correlation, cancellations, and typed expired-session/changed-response errors.
+- Added a local Lectio schedule parser that restores dates from ISO-week day columns and retains lesson status, teacher, room, source ID, and cancellation details.
+- Added synthetic fixture tests for schedule, assignments, homework, cancellations, malformed markup, expired sessions, cookie restoration, and assignment detail enrichment.
+
+### How it went
+
+- TDD began with a red collection failure because the adapter package did not exist. GitHub Actions run `36126714981` passed all 34 tests, lint, Compose validation, and both image builds. `make install-dev` also installed the exact pinned dependency and editable gateway/display packages successfully.
+- GitHub Actions run `36126714981` verified the final branch contents after the source-ID enrichment refinement; the full checks job succeeded.
+- No live Lectio account/session was available. The synthetic fixtures establish parser behavior against the inspected structure, but real account validation and current page compatibility remain untested.
+- Self-review found no Critical or Important issue in the implementation. A live MitID/Lectio test remains explicitly pending for the authentication milestone.
+- Milestone 1's implementation and CI exit criteria are complete on PR #5; the live authenticated-account compatibility check remains pending.
+
+### Next steps
+
+1. Hosted CI run `36126714981` passed tests, lint, Compose parsing, and service image builds; PR #5 remains open for review.
+2. Review the pinned dependency's AGPL-3.0 implications before distributing the combined application/image.
+3. Continue with Milestone 2 only after the adapter PR is reviewed; validate session handling against the user's real Lectio account during the browser-auth milestone.

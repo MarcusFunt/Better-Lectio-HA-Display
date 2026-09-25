@@ -1,0 +1,15 @@
+[
+  {
+    "dato": "21/09/2026 08:15 til 09:00",
+    "aktivitet": {
+      "navn": "Matematik",
+      "hold": "2x",
+      "absid": "9001"
+    },
+    "note": "Læs sider 10-12.",
+    "lektier": {
+      "beskrivelse": "Læs sider 10-12.",
+      "link": "/lectio/123/aktivitet/aktivitetforside2.aspx?absid=9001"
+    }
+  }
+]
