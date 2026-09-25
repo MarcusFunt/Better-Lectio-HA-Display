@@ -61,6 +61,7 @@ class BrowserControl:
                 "student_id_cookie": "unavailable",
                 "school_id_in_page_url": "unavailable",
                 "student_id_in_page_url": "unavailable",
+                "default_schedule_url": False,
                 "candidate_available": False,
             }
 
@@ -97,6 +98,7 @@ class BrowserControl:
             "student_id_cookie": identity_cookie_states["student_id"],
             "school_id_in_page_url": page_identity_states["school_id"],
             "student_id_in_page_url": page_identity_states["student_id"],
+            "default_schedule_url": self._is_authenticated_schedule_page(page_url),
             "candidate_available": self._make_candidate(cookies, page_url) is not None,
         }
 
@@ -196,7 +198,9 @@ class BrowserControl:
         page_identities, _ = BrowserControl._identity_from_page_url(page_url)
         school_id = school_id or page_identities.get("school_id")
         student_id = student_id or page_identities.get("student_id")
-        if not school_id or not student_id or not lectio_cookies:
+        if not school_id or not lectio_cookies:
+            return None
+        if not student_id and not BrowserControl._is_authenticated_schedule_page(page_url):
             return None
         return {
             "school_id": school_id,
@@ -238,6 +242,29 @@ class BrowserControl:
                 if states["student_id"] == "numeric":
                     identities["student_id"] = student_id
         return identities, states
+
+    @staticmethod
+    def _is_authenticated_schedule_page(page_url: str | None) -> bool:
+        if not page_url:
+            return False
+
+        parsed = urlparse(page_url)
+        if parsed.scheme != "https" or parsed.hostname != "www.lectio.dk":
+            return False
+        path_parts = parsed.path.split("/")
+        if (
+            len(path_parts) != 4
+            or path_parts[1].casefold() != "lectio"
+            or not _NUMERIC_ID.fullmatch(path_parts[2])
+            or path_parts[3].casefold() != "skemany.aspx"
+        ):
+            return False
+
+        query = parse_qs(parsed.query, keep_blank_values=True)
+        schedule_types = query.get("type", [])
+        if schedule_types and schedule_types[0].casefold() != "elev":
+            return False
+        return "elevid" not in query and "laererid" not in query
 
     async def _close_browser(self) -> None:
         self._page = None

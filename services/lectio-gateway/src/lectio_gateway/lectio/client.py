@@ -7,6 +7,7 @@ from typing import Any
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
+import requests
 from bs4 import BeautifulSoup
 
 from lectio_gateway.lectio.errors import (
@@ -59,22 +60,31 @@ class LectioClient:
                 "python-lectio is required by the Lectio gateway"
             ) from exc
 
-        identity_cookies = [
-            {
-                "name": "LastLoginExamno",
-                "value": authenticated_session.school_id,
-                "for": "www.lectio.dk/",
-            },
-            {
-                "name": "LastLoginElevId",
-                "value": authenticated_session.student_id,
-                "for": "www.lectio.dk/",
-            },
-        ]
-        cookie_payload = base64.b64encode(
-            json.dumps(identity_cookies, separators=(",", ":")).encode("utf-8")
-        ).decode("ascii")
-        client = lectio.sdk(base64Cookie=cookie_payload)
+        if authenticated_session.student_id is None:
+            # The temporary browser can expose a valid own-schedule session without
+            # either LastLogin identity cookie. The SDK constructor requires both,
+            # so initialize only the session fields needed for schedule requests.
+            client = lectio.sdk.__new__(lectio.sdk)
+            client.session = requests.Session()
+            client.skoleId = authenticated_session.school_id
+            client.elevId = None
+        else:
+            identity_cookies = [
+                {
+                    "name": "LastLoginExamno",
+                    "value": authenticated_session.school_id,
+                    "for": "www.lectio.dk/",
+                },
+                {
+                    "name": "LastLoginElevId",
+                    "value": authenticated_session.student_id,
+                    "for": "www.lectio.dk/",
+                },
+            ]
+            cookie_payload = base64.b64encode(
+                json.dumps(identity_cookies, separators=(",", ":")).encode("utf-8")
+            ).decode("ascii")
+            client = lectio.sdk(base64Cookie=cookie_payload)
 
         # python-lectio 1.31.0 reads the combined domain/path value as a domain.
         # Rebuild the cookie jar with the browser-provided attributes.
@@ -97,19 +107,24 @@ class LectioClient:
             domain="www.lectio.dk",
             path="/",
         )
-        client.session.cookies.set(
-            "LastLoginElevId",
-            authenticated_session.student_id,
-            domain="www.lectio.dk",
-            path="/",
-        )
+        if authenticated_session.student_id is not None:
+            client.session.cookies.set(
+                "LastLoginElevId",
+                authenticated_session.student_id,
+                domain="www.lectio.dk",
+                path="/",
+            )
         client.session.cookies.set("isloggedin3", "Y", domain="www.lectio.dk", path="/")
         return client
 
     def _schedule_url(self, iso_year: int, iso_week: int) -> str:
-        return (
+        url = (
             f"{LECTIO_BASE_URL}/lectio/{self.authenticated_session.school_id}/SkemaNy.aspx"
-            f"?type=elev&elevid={self.authenticated_session.student_id}"
+        )
+        if self.authenticated_session.student_id is None:
+            return f"{url}?week={iso_week:02d}{iso_year}"
+        return (
+            f"{url}?type=elev&elevid={self.authenticated_session.student_id}"
             f"&week={iso_week:02d}{iso_year}"
         )
 
@@ -194,6 +209,14 @@ class LectioClient:
         return await asyncio.to_thread(self._get_schedule, start, end)
 
     def _invoke_sdk(self, method_name: str, *args: Any) -> Any:
+        if self.authenticated_session.student_id is None and method_name in {
+            "lektier",
+            "opgaver",
+            "opgave",
+        }:
+            raise LectioAdapterError(
+                "This Lectio session did not expose a student ID required for this resource"
+            )
         try:
             with self._session_lock:
                 return getattr(self._sdk, method_name)(*args)

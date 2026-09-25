@@ -45,7 +45,7 @@ class AuthenticatedLectioSession(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     school_id: str = Field(pattern=r"^\d+$")
-    student_id: str = Field(pattern=r"^\d+$")
+    student_id: str | None = Field(default=None, pattern=r"^\d+$")
     cookies: tuple[LectioCookie, ...]
     created_at: AwareDatetime = Field(
         default_factory=lambda: datetime.now(timezone.utc)

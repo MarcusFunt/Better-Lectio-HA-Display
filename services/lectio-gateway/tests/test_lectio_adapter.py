@@ -6,7 +6,11 @@ from zoneinfo import ZoneInfo
 
 import pytest
 from lectio_gateway.lectio.client import LectioClient
-from lectio_gateway.lectio.errors import LectioResponseChanged, LectioSessionExpired
+from lectio_gateway.lectio.errors import (
+    LectioAdapterError,
+    LectioResponseChanged,
+    LectioSessionExpired,
+)
 from lectio_gateway.lectio.models import AuthenticatedLectioSession, LectioCookie
 from lectio_gateway.lectio.parsers import (
     normalize_assignments,
@@ -27,6 +31,20 @@ def make_session():
     return AuthenticatedLectioSession(
         school_id="123",
         student_id="456",
+        cookies=[
+            LectioCookie(
+                name="ASP.NET_SessionId",
+                value="synthetic-secret-cookie",
+                domain=".lectio.dk",
+            )
+        ],
+    )
+
+
+def make_session_without_student_id():
+    return AuthenticatedLectioSession(
+        school_id="123",
+        student_id=None,
         cookies=[
             LectioCookie(
                 name="ASP.NET_SessionId",
@@ -166,6 +184,56 @@ def test_client_restores_cookies_with_correct_host_and_path():
     assert "ASP.NET_SessionId=synthetic-secret-cookie" in prepared.headers["Cookie"]
     assert "LastLoginExamno=123" in prepared.headers["Cookie"]
     assert "LastLoginElevId=456" in prepared.headers["Cookie"]
+
+
+def test_client_restores_session_without_synthesizing_student_identity():
+    client = LectioClient(make_session_without_student_id())
+
+    assert client._sdk.elevId is None
+    assert client._sdk.session.cookies.get("ASP.NET_SessionId") == "synthetic-secret-cookie"
+    assert client._sdk.session.cookies.get("LastLoginExamno") == "123"
+    assert client._sdk.session.cookies.get("LastLoginElevId") is None
+
+
+def test_schedule_url_uses_authenticated_default_schedule_without_student_id():
+    client = LectioClient(
+        make_session_without_student_id(),
+        sdk_client=FakeSdk(
+            session=FakeHttpSession(FakeResponse(url="", text="")),
+        ),
+    )
+
+    assert client._schedule_url(2026, 39) == (
+        "https://www.lectio.dk/lectio/123/SkemaNy.aspx?week=392026"
+    )
+
+
+def test_validate_session_accepts_default_schedule_without_student_id():
+    http = FakeHttpSession(
+        FakeResponse(
+            url="https://www.lectio.dk/lectio/123/SkemaNy.aspx?week=392026",
+            text=(FIXTURES / "schedule.html").read_text(),
+        )
+    )
+    client = LectioClient(
+        make_session_without_student_id(), sdk_client=FakeSdk(session=http)
+    )
+
+    assert asyncio.run(client.validate_session()) is True
+    assert "elevid=" not in http.requested[0][0]
+    assert "type=elev" not in http.requested[0][0]
+
+
+def test_student_resources_fail_clearly_when_session_has_no_student_id():
+    client = LectioClient(
+        make_session_without_student_id(),
+        sdk_client=FakeSdk(
+            session=FakeHttpSession(FakeResponse(url="", text="")),
+        ),
+    )
+
+    with pytest.raises(LectioAdapterError, match="did not expose a student ID"):
+        client._invoke_sdk("opgaver")
 
 
 def test_session_model_rejects_non_lectio_cookies():

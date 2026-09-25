@@ -1802,6 +1802,34 @@ This section is the canonical running record for agent evidence, completed work,
 2. Query only `/session/diagnostics` after sign-in. Use the returned categories to identify and test the smallest candidate-extraction change if the expected cookies are absent or non-numeric.
 3. If capture succeeds, verify gateway authentication and persistence without printing or recording cookie values; keep Milestone 2 partial until that real flow succeeds.
 
+## 2026-09-25 — Accept authenticated default student schedule without identity cookie
+
+### Evidence and findings
+
+- The user-provided screenshot shows the signed-in student schedule at the exact default route `SkemaNy.aspx`, with no query string. Redacted `/session/diagnostics` reported six Lectio cookies, both expected identity cookies missing, a numeric school ID in the page path, no student ID in the path, and no candidate available.
+- The installed pinned `python-lectio` SDK requires both identity cookies during construction and uses a student ID for assignments and homework. The gateway already validates sessions by requesting and recognizing the student schedule page, and its status model already represents student ID as optional.
+- The existing implementation-plan entry above assumed a student ID could be recovered from a schedule URL. The latest screenshot disproves that assumption for the default schedule route; this entry supersedes that diagnostic direction.
+
+### Tasks completed
+
+- Candidate capture now permits a missing student ID only when the current page is the trusted HTTPS Lectio default student schedule route (`/lectio/{numeric-school}/SkemaNy.aspx`) or its `type=elev` form without an explicit student/teacher ID. Student/teacher schedule URLs and unrelated hosts remain rejected when identity cannot be established.
+- Redacted diagnostics now include `default_schedule_url` and continue to disclose only category/status values, cookie count, and candidate availability.
+- The gateway session model accepts a missing student ID. Its schedule requests use the authenticated default schedule route and week selector without synthesizing an `elevid`; SDK setup restores the actual browser cookies and only adds the school identity cookie. Assignment/homework SDK calls fail with a clear adapter error when the student ID is unavailable.
+- Added regression tests for default-route candidate capture, diagnostics, no-ID session restoration, schedule URL formation and validation, and explicit failures for ID-dependent resources.
+- Rebuilt the auth-browser and gateway images, cancelled the previous temporary browser, recreated the gateway, and started a fresh browser flow. The start response was `STARTING_BROWSER`.
+
+### How it went
+
+- The new candidate test first failed because `_make_candidate()` rejected the default schedule with no student ID. After the implementation, the full repository suite passed: `54 passed in 2.50s`; Ruff selected rules passed; `docker compose --profile auth-browser config --quiet` passed; `git diff --check` passed; both updated images built successfully.
+- The gateway restart was authorized by the user's prior “restart and diagnose” instruction. A new temporary browser is running, but real Lectio/MitID sign-in, gateway validation, and session persistence have not yet been observed. No cookie values or numeric school/student identifiers were retrieved, logged, copied, or recorded.
+- Milestone 2 remains partial. In no-student-ID mode, schedule access is implemented; assignments and homework remain unavailable until a student ID is exposed by a supported source.
+
+### Next steps
+
+1. Have the user complete Lectio/MitID sign-in in the fresh temporary browser and open the default student Skema page.
+2. Query only redacted `/session/diagnostics`, then verify gateway authentication and persisted-session file existence without reading session contents.
+3. Keep Milestone 2 partial until the live schedule-session path validates and persists successfully; then continue Milestone 3.
+
 ## 2026-09-25 — Diagnose missing Lectio identity cookies
 
 ### Evidence and findings

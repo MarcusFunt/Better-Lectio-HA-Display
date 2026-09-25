@@ -147,6 +147,17 @@ def test_candidate_uses_student_schedule_url_when_identity_cookies_are_absent():
     ]
 
 
+def test_candidate_accepts_the_authenticated_default_schedule_without_student_id():
+    candidate = BrowserControl._make_candidate(
+        [LECTIO_COOKIES[2]],
+        "https://www.lectio.dk/lectio/681/SkemaNy.aspx",
+    )
+
+    assert candidate is not None
+    assert candidate["school_id"] == "681"
+    assert candidate["student_id"] is None
+
+
 def test_candidate_rejects_untrusted_or_non_student_schedule_urls():
     urls = [
         "https://accounts.example/lectio/681/SkemaNy.aspx?type=elev&elevid=24680",
@@ -204,6 +215,7 @@ def test_cookie_diagnostics_redacts_values_and_reports_identity_formats():
             "student_id_cookie": "non_numeric",
             "school_id_in_page_url": "numeric",
             "student_id_in_page_url": "numeric",
+            "default_schedule_url": False,
             "candidate_available": True,
         }
         assert "student-secret-value" not in response.text
@@ -242,9 +254,41 @@ def test_cookie_diagnostics_distinguishes_missing_identity_cookies():
             "student_id_cookie": "missing",
             "school_id_in_page_url": "missing",
             "student_id_in_page_url": "missing",
+            "default_schedule_url": False,
             "candidate_available": False,
         }
         assert "session-secret-value" not in response.text
+
+    asyncio.run(request_diagnostics())
+
+
+def test_cookie_diagnostics_reports_default_schedule_without_student_id():
+    async def request_diagnostics():
+        browser_control = BrowserControl()
+        browser_control.state = "waiting_for_user"
+        browser_control._context = FakeContext([LECTIO_COOKIES[2]])
+        browser_control._page = FakePage(
+            "https://www.lectio.dk/lectio/681/SkemaNy.aspx"
+        )
+        app.state.browser_control = browser_control
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.get("/session/diagnostics")
+
+        assert response.status_code == 200
+        assert response.json() == {
+            "state": "waiting_for_user",
+            "available": True,
+            "lectio_cookie_count": 1,
+            "school_id_cookie": "missing",
+            "student_id_cookie": "missing",
+            "school_id_in_page_url": "numeric",
+            "student_id_in_page_url": "missing",
+            "default_schedule_url": True,
+            "candidate_available": True,
+        }
 
     asyncio.run(request_diagnostics())
 
@@ -268,6 +312,7 @@ def test_cookie_diagnostics_reports_unavailable_without_browser_context():
             "student_id_cookie": "unavailable",
             "school_id_in_page_url": "unavailable",
             "student_id_in_page_url": "unavailable",
+            "default_schedule_url": False,
             "candidate_available": False,
         }
 
