@@ -2120,3 +2120,46 @@ This section is the canonical running record for agent evidence, completed work,
 1. Implement Milestone 6's renderer against the typed `DisplayModel`, preserving the single merged timeline and fixed sidebar hierarchy.
 2. Wire the renderer and model service into the display-service lifecycle and device-facing API in their planned milestones.
 3. Validate source entity IDs and freshness behavior against a live Home Assistant instance before claiming end-to-end integration verification.
+
+## 2026-09-25 — Repository architecture and readiness review
+
+### Evidence and findings
+
+- Re-read all repository Markdown on `main`, inspected the recursive source tree, recent commits, current Compose/CI configuration, gateway/auth implementation, Home Assistant integration, display-model code, and latest GitHub Actions run.
+- Current `main` is `a71fff5` (`feat: add deterministic Home Assistant display model`). The latest CI run for that commit completed successfully in both the Python 3.12 service checks and the Python 3.14 Home Assistant integration job.
+- Milestones 0–3 are materially implemented. Real Lectio browser authentication/session capture has been observed previously, the normalized gateway API/cache has been live-tested against Lectio, and all four source endpoints have returned fresh data in the authenticated environment.
+- Milestone 4 has substantial implementation and HA-module tests but still lacks live installation/entity validation in the user's Home Assistant instance.
+- Milestone 5 is implemented as a pure/tested model layer, but it is not wired into `display_service.main`; the display service still exposes only `/health`. The `HOME_ASSISTANT_URL` and `HOME_ASSISTANT_TOKEN` Compose variables therefore do not yet drive runtime display behavior.
+- Milestones 6–10 are not implemented: no new bitmap renderer, no device API/registry, `firmware/` contains only `.gitkeep`, and `tools/provision/` contains only `.gitkeep`. Tailnet operations are also not yet configured.
+- The gateway cache keys include exact start/end timestamps. The HA coordinator generates moving ranges from `dt_util.now()`, so ordinary polling changes the cache key every cycle and will generally bypass the five-minute TTL. In addition, schedule data can be fetched redundantly by schedule, homework, and cancellation source calls. Canonical source ranges/shared schedule reuse should be added before long-running polling is considered efficient.
+- HA entities set `available` from coordinator `last_update_success`. When the gateway is unreachable, the coordinator retains last-good source data but raises `UpdateFailed`, causing entities to become unavailable. This weakens the intended stale-data behavior and makes the display layer depend on its own in-memory fallback. Retained data should remain readable while its sync metadata reports stale/error.
+- The on-demand auth-browser lifecycle service mounts the host Docker socket and runs without a non-root `USER`. Its API is narrow, but compromise of that container is effectively a Docker-host trust boundary. A permanently running lightweight browser sidecar that launches only the Chromium process on demand, or another least-privilege host supervisor, would be safer than full Docker-socket access.
+- Gateway/admin ports are currently loopback-only and the gateway data API has no application authentication. That is safe for current local testing but does not yet provide a defined secure path for an external Home Assistant instance. Likewise, the display service is not LAN-published yet. Network exposure and API authentication need to be designed before those ports are opened.
+- Display-model source entity IDs (`calendar.lectio`, `todo.lectio_assignments`, `todo.lectio_homework`, `sensor.lectio_cancellations`) and the default private calendar (`calendar.private`) are currently fixed in code. They should be configurable because HA entity IDs can differ or be renamed.
+- CI is meaningfully better than the original project: tests, selected Ruff rules, Compose validation, image builds, and a dedicated Home Assistant job are green. Remaining quality gaps include no type checker, no coverage threshold, no dependency/container vulnerability scan, floating Docker base-image/dependency ranges, and no full Compose integration test.
+- The legacy TRMNL implementation remains in `trmnl_schedule/` and its dependencies remain in the default dev environment through `legacy/requirements.txt`. This is reasonable during migration but should be removed or fully moved under `legacy/` once the new renderer/device path replaces it.
+- Recent major changes after PR #5 were pushed directly to `main`; GitHub branch-protection state could not be read with the installed integration. For the remaining authentication/device work, PR review plus required CI before merge is recommended.
+
+### Tasks completed
+
+- Reviewed current implementation against the architecture and implementation-plan milestones.
+- Verified the latest GitHub Actions run on `a71fff5` is green for both CI jobs.
+- Identified concrete integration, resilience, security, configuration, performance, and release-readiness gaps rather than relying only on milestone labels.
+- Produced an ordered completion strategy for the user-facing review; no application/runtime files were changed.
+
+### How it went
+
+- This was a repository review, not an implementation pass. No live Home Assistant instance, physical display, USB device, Tailnet route, or hardware firmware path was available or claimed as verified.
+- The current codebase is substantially beyond a scaffold: Lectio auth/data and most HA-facing domain logic exist. However, there is still no end-to-end path from Home Assistant through a renderer/device API to the physical display.
+- Using the earlier heuristic milestone weights, completed/mostly completed M0–M5 plus partial hardening/CI place the engineering plan at roughly 60% by weighted effort. End-to-end appliance readiness is lower because the renderer/device/firmware/provisioning chain and live HA validation are still missing.
+
+### Next steps
+
+1. Fix the foundation issues before adding more layers: canonicalize/reuse Lectio cache ranges, preserve HA last-good data as available-but-stale, make HA entity IDs/private calendars configurable, and decide the safer auth-browser lifecycle model.
+2. Perform a live Home Assistant install/configuration test against the running gateway and verify the six entities plus a normal private calendar.
+3. Wire `DisplayModelService` into the display-service lifecycle and implement Milestone 6 renderer with content hashing, persisted last-good bitmap, and visual regression fixtures.
+4. Implement the authenticated LAN device API/registry and decide the gateway-to-HA LAN/Tailnet authentication boundary before publishing service ports.
+5. Implement/fork the actual display firmware, then USB provisioning, and prove the complete device loop on physical hardware.
+6. Add Tailscale Serve configuration for remote admin/login and run failure/restart/expiry tests across the whole stack.
+7. Harden CI/release process with PR-required checks, type/coverage/security checks, dependency locking, and removal of legacy runtime code after parity is reached.
+
