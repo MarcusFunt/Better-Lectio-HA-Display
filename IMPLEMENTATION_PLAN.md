@@ -1437,3 +1437,38 @@ This section is the canonical running record for agent evidence, completed work,
 3. Preserve the explicit distinction between target architecture and verified implementation state until each milestone is actually completed.
 4. Continue recording all implementation evidence, outcomes, and next actions in this execution log.
 
+## 2026-09-25 — Milestone 0: repository scaffolding
+
+### Evidence and findings
+
+- Work started from `main` at `233185c97f6972ca055d80e1c6095bfdb3c4f610`; the checkout was clean and the repository contains four Markdown files at its root. All Markdown files were read before implementation, as required by `AGENTS.md`.
+- The existing runtime was still the TRMNL/Pi prototype: root `trmnl_schedule/`, systemd units, a root `requirements.txt`, and `.env.example` entries for a Lectio username/password and raw ICS URL.
+- The baseline suite passed after installing the existing requirements into a local virtual environment: 14 tests passed.
+- `docker` and `docker-compose` are unavailable in the execution environment. Compose YAML and intended service/volume/port boundaries are covered by Python tests; actual `docker compose config` and image builds are delegated to the new GitHub Actions workflow and must be confirmed there.
+
+### Tasks completed
+
+- Added independent Python packages and Dockerfiles for `services/lectio-gateway` and `services/display-service`. Each currently exposes only a named `/health` endpoint; Lectio access, Home Assistant data, display rendering, and device APIs remain for their planned milestones.
+- Added a root `docker-compose.yml` with separate services, persistent named volumes, restart policies, health checks, and internal-only ports. It publishes no host ports by default; later API/device milestones must add only the access paths they require.
+- Replaced the old `.env.example` values with target-stack settings and an empty Home Assistant token placeholder. No Lectio password or raw ICS setting is present.
+- Added `Makefile` targets for development installation, tests, lint, and Compose config/build/up/down. Added per-service health tests and regression checks for Compose boundaries and the environment template.
+- Added `.github/workflows/ci.yml` to run the existing prototype tests, new service tests, lint, Compose configuration validation, and service image builds.
+- Moved the old systemd units and their dependency list into `legacy/systemd/` and `legacy/requirements.txt`. Updated `README.md` to label these files as prototype artifacts and describe the current scaffold accurately.
+- Added empty structure markers for `docs/`, the Home Assistant integration, firmware, and the provisioning tool. No Home Assistant behavior, firmware board configuration, or USB provisioning protocol was guessed ahead of its milestone.
+
+### How it went
+
+- TDD checks first failed because the Compose file and health modules were absent and because the old environment template still exposed the retired login/ICS settings. After the implementation, `make test` passed with 20 tests, `make lint` passed, and `pip wheel --no-deps` built both service packages successfully.
+- The first wheel build created setuptools `build/` files inside each service source tree; those generated files were removed from the change and `build/` is now ignored.
+- `git diff --check` passed. The new tests parse the Compose YAML and check that services remain unpublished, but they do not replace Docker Compose's own parser/build; those checks remain pending CI.
+- No live Lectio/MitID login, Home Assistant connection, Tailnet route, firmware build/flash, or physical display test was run. These behaviors are not part of Milestone 0.
+- **Ruling:** keep `AGENTS.md`, `ARCHITECTURE_AND_OPERATIONS.md`, and `IMPLEMENTATION_PLAN.md` at the repository root, although Milestone 0's approximate tree suggests moving architecture documents into `docs/`. `AGENTS.md` requires reading and updating those canonical root paths, and the earlier user instruction made `IMPLEMENTATION_PLAN.md` the single progress log. The `docs/` directory is created for later supporting documents. Cost if wrong: the repository differs from the approximate layout until the agent contract is deliberately revised.
+- **Ruling:** use `IMPLEMENTATION_PLAN.md` as the execution ledger rather than creating the separate SDD `progress.md`; `AGENTS.md` and the earlier user instruction require one canonical progress document. Cost if wrong: the SDD helper scripts cannot independently resume this milestone, but the repository's mandated evidence log remains complete.
+- Milestone 0 is implemented locally but is not yet recorded as complete because the actual Compose parser and image builds must pass in CI.
+- Final review: self-review (no subagent tool). The full staged diff was reviewed against Milestone 0 and `AGENTS.md`; no Critical or Important issues were found. Docker Compose parsing and image builds remain a CI gate.
+
+### Next steps
+
+1. Open a PR for this scaffold and verify that CI's Compose validation and image builds pass; fix any failures before marking Milestone 0 complete.
+2. Proceed to Milestone 1: define the normalized Lectio domain models and adapter boundary, pin the selected `python-lectio` source, and add fixture-driven tests before implementing the Phase-1 browser flow.
+3. Keep the first real MitID/Lectio session test explicitly pending until it is run against the user's account.

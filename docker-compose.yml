@@ -1,0 +1,52 @@
+services:
+  lectio-gateway:
+    build:
+      context: ./services/lectio-gateway
+    init: true
+    restart: unless-stopped
+    environment:
+      LECTIO_DATA_DIR: /var/lib/better-lectio
+      TZ: ${TIMEZONE:-Europe/Copenhagen}
+    volumes:
+      - lectio-gateway-data:/var/lib/better-lectio
+    expose:
+      - "8000"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+  display-service:
+    build:
+      context: ./services/display-service
+    init: true
+    restart: unless-stopped
+    environment:
+      DISPLAY_DATA_DIR: /var/lib/better-lectio-display
+      HOME_ASSISTANT_URL: ${HOME_ASSISTANT_URL:-}
+      HOME_ASSISTANT_TOKEN: ${HOME_ASSISTANT_TOKEN:-}
+      TZ: ${TIMEZONE:-Europe/Copenhagen}
+    volumes:
+      - display-service-data:/var/lib/better-lectio-display
+    expose:
+      - "8000"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  lectio-gateway-data:
+  display-service-data:

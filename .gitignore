@@ -1,6 +1,10 @@
 __pycache__/
 *.py[cod]
 .venv/
+build/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
 data/
 *.sqlite3
 *.bmp
