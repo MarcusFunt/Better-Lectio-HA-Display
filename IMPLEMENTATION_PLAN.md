@@ -998,6 +998,367 @@ Document exposing:
 through Tailscale Serve.
 
 Keep the underlying admin services bound to localhost/private interfaces where possible.
+## 13.2 ACL assumptions
+
+Document expected Tailnet ACL access.
+
+Do not assume every Tailnet member should automatically get Lectio admin access.
+
+## 13.3 No public exposure
+
+Do not require:
+
+- router port forwarding
+- public reverse proxy
+- Tailscale Funnel
+
+for normal administration.
+
+## Exit criteria
+
+The user can be away from home, join the Tailnet, and:
+
+- inspect status
+- trigger Lectio reauthentication
+- complete MitID login
+- inspect display/service health
+
+without public Internet exposure of the services.
+
+---
+
+# 14. Milestone 11 — Phase-2 auth-flow analysis
+
+Only do this after Phase 1 has been proven with real authentication.
+
+## Tasks
+
+Capture and document:
+
+- login entry URL
+- redirect chain
+- domains involved
+- callback points
+- cookies before authentication
+- cookies after authentication
+- cookies actually required by python-lectio
+- relationship between browser session and Lectio session
+- logout/expiry behavior
+
+Do not record or commit real sensitive values.
+
+Create sanitized state-transition documentation.
+
+Add tests around:
+
+```text
+browser cookies → AuthenticatedLectioSession
+AuthenticatedLectioSession → python-lectio session
+expired cookies → LOGIN_REQUIRED
+```
+
+## Exit criteria
+
+The authentication flow is understood well enough to decide whether Phase 3 is feasible without browser streaming.
+
+---
+
+# 15. Milestone 12 — Phase-3 streamlined login
+
+Proceed only if Phase 2 shows that the browser flow can be safely simplified.
+
+## Goal
+
+Replace normal use of remote Chromium with:
+
+```text
+/auth/login
+```
+
+opened in the user's normal browser.
+
+## Requirements
+
+- real MitID remains manual
+- no credential scraping
+- same `AuthenticatedLectioSession` result
+- same validation path
+- Playwright fallback remains available
+
+## Exit criteria
+
+Normal reauthentication no longer requires the remote browser UI, while `/auth/browser-login` can still recover the system if Lectio changes.
+
+---
+
+# 16. Milestone 13 — operational hardening
+
+## Add health checks
+
+Compose health checks for:
+
+```text
+lectio-gateway
+display-service
+auth-browser when active
+```
+
+## Add restart policies
+
+Use sensible container restart policies for always-on services.
+
+Do not restart-loop the temporary browser service forever on auth failure.
+
+## Add metrics/status
+
+At minimum make visible:
+
+```text
+Lectio authenticated?
+last Lectio sync
+HA reachable?
+last HA fetch
+last render
+current image hash
+last device request
+firmware version
+```
+
+## Logging
+
+- structured logs where useful
+- timestamps
+- request correlation IDs for cross-service operations
+- secret redaction
+- no browser cookie dumps
+
+## Backups
+
+Document backing up:
+
+```text
+Lectio session state
+device registry
+display-service state
+Home Assistant integration configuration
+```
+
+Do not treat generated BMPs as critical backup data.
+
+---
+
+# 17. Milestone 14 — CI
+
+CI should include:
+
+## Python services
+
+- formatting
+- lint
+- type checking where adopted
+- unit tests
+- fixture parser tests
+- API tests
+- renderer snapshot tests
+
+## Home Assistant integration
+
+- manifest validation
+- unit tests
+- HA-style checks where practical
+
+## Firmware
+
+- PlatformIO compile
+- build for actual target board
+- static checks
+- host-side unit tests where possible
+
+## Provision tool
+
+- unit tests
+- protocol parser tests
+- mock serial integration tests
+
+## Docker
+
+- build all images
+- validate Compose configuration
+
+The repository should never merge code that breaks firmware compilation if firmware and server are intended to ship together.
+
+---
+
+# 18. Suggested implementation PR sequence
+
+Keep changes reviewable.
+
+### PR 1 — Architecture scaffold
+- docs
+- Compose skeleton
+- new directories
+- CI skeleton
+- retire Pi-first assumptions
+
+### PR 2 — Lectio adapter
+- normalized models
+- python-lectio wrapper
+- fixtures/tests
+
+### PR 3 — Phase-1 Playwright authentication
+- browser service
+- auth state machine
+- session extraction/validation
+- Tailnet-only browser docs
+
+### PR 4 — Lectio Gateway API/resilience
+- normalized endpoints
+- per-source cache
+- stale fallback
+- health/status
+
+### PR 5 — Home Assistant integration
+- calendar
+- todo assignments
+- todo homework
+- cancellation/session sensors
+
+### PR 6 — display model
+- HA client
+- three-day merge
+- sidebar priority rules
+
+### PR 7 — renderer rewrite
+- chronological layout
+- sidebar
+- snapshot tests
+
+### PR 8 — device API
+- registry
+- credentials
+- content-hash protocol
+
+### PR 9 — firmware baseline
+- fork/reference upstream hardware code
+- Wi-Fi
+- device API
+- BMP rendering
+- continuous mains-powered operation
+
+### PR 10 — USB provisioning
+- serial protocol
+- credential generation
+- server registration
+- end-to-end self-test
+
+### PR 11 — Tailscale operations
+- Serve configuration/docs
+- hardened service binding
+- remote auth/status workflow
+
+### PR 12 — authentication Phase 2
+- sanitized flow analysis
+- regression fixtures
+- design decision for Phase 3
+
+### PR 13 — authentication Phase 3
+- streamlined `/auth/login`
+- retain browser fallback
+
+---
+
+# 19. End-to-end acceptance criteria
+
+The architecture is considered functionally implemented when all of the following are true.
+
+## Authentication
+
+- A fresh installation reports Lectio login required.
+- The user can start a browser-login session remotely over the Tailnet.
+- The user completes MitID manually.
+- The gateway captures and validates the Lectio session.
+- Chromium terminates afterwards.
+- Normal Lectio sync proceeds without a browser process.
+
+## Home Assistant
+
+HA exposes:
+
+```text
+calendar.lectio
+todo.lectio_assignments
+todo.lectio_homework
+sensor.lectio_cancellations
+sensor.lectio_session_status
+```
+
+A private calendar event added through normal HA Calendar appears in the display model.
+
+## Display
+
+The rendered 800×480 monochrome UI shows:
+
+- today
+- tomorrow
+- day after tomorrow
+- merged chronological Lectio/private events
+- subject
+- teacher
+- room
+- right sidebar
+
+Sidebar order is:
+
+```text
+cancellations
+assignments
+homework
+```
+
+## Firmware
+
+- firmware compiles in CI
+- the same generic firmware binary can be used for multiple devices
+- per-device secrets are provisioned later over USB
+- the display authenticates over LAN
+- unchanged content does not cause unnecessary e-paper refresh
+- changed content is applied automatically
+- temporary server/network failure leaves the previous valid image visible
+
+## Operations
+
+- services run under Docker Compose
+- remote human access uses Tailscale
+- admin/auth services are not directly exposed publicly
+- stale source data is retained
+- logs do not leak secrets
+- health/status endpoints identify the failing layer
+
+---
+
+# 20. First implementation focus
+
+The first engineering pass should stop after proving this vertical slice:
+
+```text
+Docker Compose
+      ↓
+Lectio Gateway
+      ↓
+temporary Playwright Chromium
+      ↓
+manual MitID login
+      ↓
+capture Lectio session
+      ↓
+python-lectio validation
+      ↓
+GET normalized schedule/homework/assignments/cancellations
+```
+
+Do not spend significant time polishing the renderer or firmware before this vertical slice works against the real Lectio account.
+
+Once that succeeds, the highest-risk unknown in the architecture is removed and the remaining work becomes normal integration and product engineering.
 
 # 21. Agent execution log
 
@@ -1011,6 +1372,7 @@ This section is the canonical running record for agent evidence, completed work,
 - The current `README.md` still documents the superseded first implementation: Raspberry Pi Zero deployment, systemd services, stock TRMNL/Seeed firmware, direct `python-lectio` login in the renderer/server, and an optional raw ICS feed. It was intentionally left unchanged in this task because routine agent progress must not be spread across multiple Markdown files.
 - The architecture agreed after the initial implementation is captured in `ARCHITECTURE_AND_OPERATIONS.md`, including Docker Compose deployment, a dedicated Lectio Gateway, Home Assistant as the mandatory middle layer, Playwright-based Phase-1 MitID/Lectio authentication, custom firmware, USB-only provisioning, LAN-only display connectivity, and Tailscale-backed remote human/admin access.
 - A dedicated root `AGENTS.md` is necessary so future agents cannot begin from the stale README alone or create fragmented progress/handoff files.
+- Branch verification against `main` showed the documentation branch was ahead with only the intended Markdown additions: `AGENTS.md`, `ARCHITECTURE_AND_OPERATIONS.md`, and `IMPLEMENTATION_PLAN.md`. No runtime source/configuration files were changed.
 
 ### Tasks completed
 
@@ -1023,7 +1385,8 @@ This section is the canonical running record for agent evidence, completed work,
 ### How it went
 
 - This is a documentation-only governance change; no runtime code, Docker configuration, Home Assistant integration, firmware, or deployment behavior was changed.
-- No application tests were required for the content itself. Validation for this task consists of checking the branch contents/diff and confirming that the three new Markdown documents are present and internally consistent.
+- No application tests were required for the content itself. Validation consisted of comparing the branch against `main` and confirming that the branch contains the four expected Markdown files: existing `README.md` plus the three new documents.
+- During validation, the first upload of `IMPLEMENTATION_PLAN.md` was found to have been truncated because the source-file reader returned only its first 1,000 lines. The file was reconstructed from both source ranges before the PR was opened. This is exactly the kind of implementation evidence this execution log is intended to preserve.
 - The stale `README.md` remains a known inconsistency with the new architecture. Because the user specifically requested that routine agent updates only touch the implementation plan, it is not rewritten opportunistically here; a future explicit documentation task can retire or replace its old setup instructions.
 
 ### Next steps
