@@ -2306,9 +2306,9 @@ This section is the canonical running record for agent evidence, completed work,
 - Final default project suite: `114 passed in 5.23s` across root, gateway, auth-browser, auth-lifecycle, and display-service tests. The separately run Home Assistant suite passed (`23 passed` under Python 3.14; five upstream deprecation warnings). Ruff passed across Python services, Home Assistant, and root scaffold tests. `docker compose config --quiet` passed, and `docker compose --profile auth-browser build` built all four service images successfully.
 - `git diff HEAD --check` passed. No live Home Assistant request or physical e-paper display was available, so those end-to-end paths remain unverified. The Python 3.12 container lacks the optional Home Assistant package; the Home Assistant suite was run separately in the existing Python 3.14 environment.
 - This execution closes the local Milestone 6 renderer acceptance and adds regression coverage for the Milestone 7 image/device path. The prior 68% weighted estimate predates this work and is superseded for Milestone 6; no new project-wide weighted estimate was calculated.
+- Committed the implementation on `main` as `f47d64f` (`feat: implement display renderer and device API`) and pushed it to `origin/main`. `git ls-remote origin refs/heads/main` returned `f47d64f3a0ce835f64287d620a2c0fba0eef87d4`, matching local `HEAD`; the worktree was clean after the push.
 
 ### Next steps
 
-1. Inspect and commit the reviewed implementation on `main`, then push to `origin/main` as previously requested.
-2. Verify the remote branch and local working tree after the push.
-3. Continue with live Home Assistant and physical display verification when those environments are available, and add a human-facing freshness diagnostics surface during operational hardening.
+1. Continue with live Home Assistant and physical display verification when those environments are available.
+2. Add a human-facing source-freshness diagnostics surface during operational hardening.
