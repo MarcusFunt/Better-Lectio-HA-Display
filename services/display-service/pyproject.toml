@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=69,<82"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "better-lectio-display-service"
+version = "0.1.0"
+description = "Home Assistant-backed e-paper display service"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115,<1",
+    "uvicorn>=0.30,<1",
+]
+
+[project.optional-dependencies]
+test = [
+    "httpx>=0.27,<1",
+    "pytest>=8,<9",
+]
+lint = ["ruff>=0.9,<1"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

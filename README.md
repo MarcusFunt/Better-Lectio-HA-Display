@@ -282,9 +282,9 @@ Each service should expose enough health/status information to identify which la
 
 ## Current implementation status
 
-The repository is in an architectural migration.
+The repository is in an architectural migration. The Compose and service-package scaffold is in place, but the health endpoints are the only runtime behavior in the new services so far. The services are not published to host ports yet; API and device access will be wired in their later milestones.
 
-The existing `trmnl_schedule/`, `systemd/`, legacy `.env.example`, and related tests/configuration belong to the earlier prototype and do not define the target architecture.
+The existing `trmnl_schedule/`, retained prototype tests, `legacy/requirements.txt`, and systemd units under `legacy/systemd/` belong to the earlier prototype and do not define the target architecture. `.env.example` now contains only target-stack placeholders; it has no Lectio password or raw ICS settings.
 
 The next implementation focus is the first vertical slice:
 
