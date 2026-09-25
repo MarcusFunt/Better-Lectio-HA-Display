@@ -68,8 +68,11 @@ class FakeContext:
 
 
 class FakePage:
+    def __init__(self, url="about:blank"):
+        self.url = url
+
     async def goto(self, url, *, wait_until, timeout):
-        return None
+        self.url = url
 
 
 class FakeBrowser:
@@ -130,6 +133,31 @@ def test_browser_captures_host_only_lectio_identity_cookies(monkeypatch):
     asyncio.run(run_login())
 
 
+def test_candidate_uses_student_schedule_url_when_identity_cookies_are_absent():
+    candidate = BrowserControl._make_candidate(
+        [LECTIO_COOKIES[2]],
+        "https://www.lectio.dk/lectio/681/SkemaNy.aspx?type=elev&elevid=24680",
+    )
+
+    assert candidate is not None
+    assert candidate["school_id"] == "681"
+    assert candidate["student_id"] == "24680"
+    assert [cookie["name"] for cookie in candidate["cookies"]] == [
+        "ASP.NET_SessionId"
+    ]
+
+
+def test_candidate_rejects_untrusted_or_non_student_schedule_urls():
+    urls = [
+        "https://accounts.example/lectio/681/SkemaNy.aspx?type=elev&elevid=24680",
+        "https://www.lectio.dk/lectio/681/SkemaNy.aspx?type=laerer&laererid=24680",
+        "https://www.lectio.dk/lectio/681/other.aspx?type=elev&elevid=24680",
+    ]
+
+    for url in urls:
+        assert BrowserControl._make_candidate([LECTIO_COOKIES[2]], url) is None
+
+
 def test_cookie_diagnostics_redacts_values_and_reports_identity_formats():
     async def request_diagnostics():
         cookies = [
@@ -157,6 +185,9 @@ def test_cookie_diagnostics_redacts_values_and_reports_identity_formats():
         browser_control = BrowserControl()
         browser_control.state = "waiting_for_user"
         browser_control._context = FakeContext(cookies)
+        browser_control._page = FakePage(
+            "https://www.lectio.dk/lectio/681/SkemaNy.aspx?type=elev&elevid=321"
+        )
         app.state.browser_control = browser_control
 
         async with AsyncClient(
@@ -171,6 +202,9 @@ def test_cookie_diagnostics_redacts_values_and_reports_identity_formats():
             "lectio_cookie_count": 3,
             "school_id_cookie": "numeric",
             "student_id_cookie": "non_numeric",
+            "school_id_in_page_url": "numeric",
+            "student_id_in_page_url": "numeric",
+            "candidate_available": True,
         }
         assert "student-secret-value" not in response.text
         assert "session-secret-value" not in response.text
@@ -206,6 +240,9 @@ def test_cookie_diagnostics_distinguishes_missing_identity_cookies():
             "lectio_cookie_count": 1,
             "school_id_cookie": "missing",
             "student_id_cookie": "missing",
+            "school_id_in_page_url": "missing",
+            "student_id_in_page_url": "missing",
+            "candidate_available": False,
         }
         assert "session-secret-value" not in response.text
 
@@ -229,6 +266,9 @@ def test_cookie_diagnostics_reports_unavailable_without_browser_context():
             "lectio_cookie_count": None,
             "school_id_cookie": "unavailable",
             "student_id_cookie": "unavailable",
+            "school_id_in_page_url": "unavailable",
+            "student_id_in_page_url": "unavailable",
+            "candidate_available": False,
         }
 
     asyncio.run(request_diagnostics())

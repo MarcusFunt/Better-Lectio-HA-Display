@@ -1801,3 +1801,31 @@ This section is the canonical running record for agent evidence, completed work,
 1. Have the user manually complete Lectio/MitID sign-in in the fresh browser at `http://localhost:8000/auth/browser`.
 2. Query only `/session/diagnostics` after sign-in. Use the returned categories to identify and test the smallest candidate-extraction change if the expected cookies are absent or non-numeric.
 3. If capture succeeds, verify gateway authentication and persistence without printing or recording cookie values; keep Milestone 2 partial until that real flow succeeds.
+
+## 2026-09-25 — Diagnose missing Lectio identity cookies
+
+### Evidence and findings
+
+- The user-provided screenshot shows the signed-in Lectio navigation on a Help page, while gateway status remains `WAITING_FOR_USER`.
+- Queried only the internal redacted `/session/diagnostics` route. It reports an available browser context, six Lectio-domain cookies, and both expected identity cookie names (`LastLoginExamno`, `LastLoginElevId`) as missing. No cookie names or values were returned by the route.
+- `BrowserControl._make_candidate()` required those two cookies, so it could not create a candidate from this signed-in session. The screenshot's Help URL has the school ID in its `/lectio/{school}/...` path but no student ID.
+- A public Lectio integration documents the student schedule URL shape as `SkemaNy.aspx?type=elev&elevid=...` ([repository](https://github.com/BjornGrylls/lectio-skema-til-.ics-kalender)). This is a third-party implementation reference; the actual account flow still needs live validation.
+
+### Tasks completed
+
+- Added a fallback that derives the school ID only from a numeric path segment on `https://www.lectio.dk/lectio/...`, and derives the student ID only from a numeric `elevid` query on that host's student `SkemaNy.aspx?type=elev` page. Numeric identity cookies keep precedence when present.
+- Extended redacted diagnostics to report the identity format available in the current page URL and whether a candidate can be formed, without returning the URL or identifiers.
+- Added tests covering the fallback and rejection of other hosts, teacher schedules, and unrelated pages.
+
+### How it went
+
+- The new schedule-URL test first failed because candidate extraction did not accept a page URL, then passed after the fallback was implemented.
+- The complete repository suite passed: `48 passed in 2.58s`. Ruff selected rules passed, and Compose configuration parsed successfully.
+- The currently running browser still uses the prior image. No live candidate, gateway validation, or persistence has been observed for the URL fallback yet. Rebuilding/restarting will end this authenticated temporary browser context; the user will need to sign in again and open the student Skema page once.
+- No cookie values or student/school identifiers were retrieved, logged, copied, or written to this plan.
+
+### Next steps
+
+1. Build the updated auth-browser image, restart the temporary browser, and wait for manual Lectio/MitID sign-in.
+2. Have the user open the student Skema page once; inspect only redacted `/session/diagnostics` and gateway auth state.
+3. Keep Milestone 2 partial until candidate capture, real session validation, and persistence succeed.

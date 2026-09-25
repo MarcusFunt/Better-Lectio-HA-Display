@@ -2,9 +2,15 @@ import asyncio
 import logging
 import re
 from datetime import datetime, timezone
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
-from playwright.async_api import Browser, BrowserContext, Playwright, async_playwright
+from playwright.async_api import (
+    Browser,
+    BrowserContext,
+    Page,
+    Playwright,
+    async_playwright,
+)
 
 _LOGGER = logging.getLogger(__name__)
 _LECTIO_ORIGIN = "https://www.lectio.dk"
@@ -24,6 +30,7 @@ class BrowserControl:
         self._task: asyncio.Task[None] | None = None
         self._complete_event: asyncio.Event | None = None
         self._context: BrowserContext | None = None
+        self._page: Page | None = None
         self._browser: Browser | None = None
         self._playwright: Playwright | None = None
         self._lock = asyncio.Lock()
@@ -52,9 +59,14 @@ class BrowserControl:
                 "lectio_cookie_count": None,
                 "school_id_cookie": "unavailable",
                 "student_id_cookie": "unavailable",
+                "school_id_in_page_url": "unavailable",
+                "student_id_in_page_url": "unavailable",
+                "candidate_available": False,
             }
 
         cookies = await context.cookies()
+        page_url = self._page.url if self._page is not None else None
+        _, page_identity_states = self._identity_from_page_url(page_url)
         identity_cookie_states = {
             "school_id": "missing",
             "student_id": "missing",
@@ -83,6 +95,9 @@ class BrowserControl:
             "lectio_cookie_count": lectio_cookie_count,
             "school_id_cookie": identity_cookie_states["school_id"],
             "student_id_cookie": identity_cookie_states["student_id"],
+            "school_id_in_page_url": page_identity_states["school_id"],
+            "student_id_in_page_url": page_identity_states["student_id"],
+            "candidate_available": self._make_candidate(cookies, page_url) is not None,
         }
 
     async def complete(self) -> None:
@@ -115,11 +130,12 @@ class BrowserControl:
                 viewport={"width": 1280, "height": 800}
             )
             page = await self._context.new_page()
+            self._page = page
             await page.goto(login_url, wait_until="domcontentloaded", timeout=60_000)
             self.state = "waiting_for_user"
             while asyncio.get_running_loop().time() < deadline:
                 cookies = await self._context.cookies()
-                candidate = self._make_candidate(cookies)
+                candidate = self._make_candidate(cookies, page.url)
                 if candidate is not None:
                     if self._candidate is None or any(
                         candidate[key] != self._candidate.get(key)
@@ -150,7 +166,9 @@ class BrowserControl:
                 self._task = None
 
     @staticmethod
-    def _make_candidate(cookies: list[dict[str, object]]) -> dict[str, object] | None:
+    def _make_candidate(
+        cookies: list[dict[str, object]], page_url: str | None = None
+    ) -> dict[str, object] | None:
         lectio_cookies: list[dict[str, object]] = []
         identities: dict[str, str] = {}
         for cookie in cookies:
@@ -175,6 +193,9 @@ class BrowserControl:
             )
         school_id = identities.get("school_id")
         student_id = identities.get("student_id")
+        page_identities, _ = BrowserControl._identity_from_page_url(page_url)
+        school_id = school_id or page_identities.get("school_id")
+        student_id = student_id or page_identities.get("student_id")
         if not school_id or not student_id or not lectio_cookies:
             return None
         return {
@@ -183,7 +204,43 @@ class BrowserControl:
             "cookies": lectio_cookies,
         }
 
+    @staticmethod
+    def _identity_from_page_url(
+        page_url: str | None,
+    ) -> tuple[dict[str, str], dict[str, str]]:
+        identities: dict[str, str] = {}
+        states = {"school_id": "missing", "student_id": "missing"}
+        if not page_url:
+            return identities, states
+
+        parsed = urlparse(page_url)
+        if parsed.scheme != "https" or parsed.hostname != "www.lectio.dk":
+            return identities, states
+
+        path_parts = parsed.path.split("/")
+        if len(path_parts) > 2 and path_parts[1].casefold() == "lectio":
+            school_id = path_parts[2]
+            states["school_id"] = (
+                "numeric" if _NUMERIC_ID.fullmatch(school_id) else "non_numeric"
+            )
+            if states["school_id"] == "numeric":
+                identities["school_id"] = school_id
+
+        if parsed.path.casefold().endswith("/skemany.aspx"):
+            query = parse_qs(parsed.query, keep_blank_values=True)
+            types = query.get("type", [])
+            student_ids = query.get("elevid", [])
+            if types and types[0].casefold() == "elev" and student_ids:
+                student_id = student_ids[0]
+                states["student_id"] = (
+                    "numeric" if _NUMERIC_ID.fullmatch(student_id) else "non_numeric"
+                )
+                if states["student_id"] == "numeric":
+                    identities["student_id"] = student_id
+        return identities, states
+
     async def _close_browser(self) -> None:
+        self._page = None
         if self._context is not None:
             try:
                 await self._context.close()
