@@ -264,6 +264,26 @@ def test_validate_session_accepts_schedule_fixture():
     assert asyncio.run(client.validate_session()) is True
 
 
+def test_client_fetches_single_schedule_iso_week():
+    http = FakeHttpSession(
+        FakeResponse(
+            url="https://www.lectio.dk/lectio/123/SkemaNy.aspx",
+            text=(FIXTURES / "schedule.html").read_text(),
+        )
+    )
+    client = LectioClient(make_session(), sdk_client=FakeSdk(session=http))
+
+    lessons = asyncio.run(client.get_schedule_week(2026, 39))
+
+    assert len(http.requested) == 1
+    assert http.requested[0][0] == (
+        "https://www.lectio.dk/lectio/123/SkemaNy.aspx"
+        "?type=elev&elevid=456&week=392026"
+    )
+    assert [lesson.source_id for lesson in lessons] == ["9001", "9002"]
+    assert lessons[0].start == datetime(2026, 9, 21, 8, 15, tzinfo=COPENHAGEN)
+
+
 def test_client_normalizes_assignments_from_the_pinned_sdk():
     sdk = FakeSdk(
         session=FakeHttpSession(FakeResponse(url="", text="")),

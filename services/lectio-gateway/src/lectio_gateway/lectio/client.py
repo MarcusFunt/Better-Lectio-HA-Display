@@ -191,19 +191,28 @@ class LectioClient:
         lessons: list[LectioLesson] = []
         while monday <= last_day:
             iso_year, iso_week, _ = monday.isocalendar()
-            html = self._fetch_schedule_html(iso_year, iso_week)
-            lessons.extend(
-                parse_schedule_html(
-                    html,
-                    school_id=self.authenticated_session.school_id,
-                    iso_year=iso_year,
-                    iso_week=iso_week,
-                )
-            )
+            lessons.extend(self._get_schedule_week(iso_year, iso_week))
             monday += timedelta(days=7)
         return [
             lesson for lesson in lessons if lesson.start < end and lesson.end > start
         ]
+
+    def _get_schedule_week(self, iso_year: int, iso_week: int) -> list[LectioLesson]:
+        """Fetch and normalize exactly one ISO-week schedule page."""
+        datetime.fromisocalendar(iso_year, iso_week, 1)
+        html = self._fetch_schedule_html(iso_year, iso_week)
+        return parse_schedule_html(
+            html,
+            school_id=self.authenticated_session.school_id,
+            iso_year=iso_year,
+            iso_week=iso_week,
+        )
+
+    async def get_schedule_week(
+        self, iso_year: int, iso_week: int
+    ) -> list[LectioLesson]:
+        """Fetch one normalized Lectio ISO-week page."""
+        return await asyncio.to_thread(self._get_schedule_week, iso_year, iso_week)
 
     async def get_schedule(self, start: datetime, end: datetime) -> list[LectioLesson]:
         return await asyncio.to_thread(self._get_schedule, start, end)
