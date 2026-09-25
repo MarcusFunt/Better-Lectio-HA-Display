@@ -2381,19 +2381,21 @@ This section is the canonical running record for agent evidence, completed work,
 ### Evidence and findings
 
 - Inspected the latest GitHub Actions run for `main`, run `36190870337` on commit `890fc4e`. The `home-assistant-integration` job passed. The `checks` job failed during `make test`: all eight renderer snapshot cases differed from the committed fixtures, while the other 109 tests passed.
-- The snapshot renderer loads `/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf` directly. The display-service Dockerfile installs `fonts-dejavu-core`, but the GitHub `checks` workflow installed only Python packages and did not declare or verify the renderer font dependency. This left pixel snapshots dependent on the hosted runner's ambient font installation.
+- A first attempt added `fonts-dejavu-core` directly to the Ubuntu checks runner. Run `36191766201` still failed the same eight snapshots, so installing the font on the hosted runner was insufficient.
+- Reproduced the snapshots alone and the full suite inside a clean Ubuntu 24.04 container with Pillow 12.3.0 and `fonts-dejavu-core` 2.37-8; all eight snapshots and all 117 project tests passed there. The hosted runner's execution context still differs from that reproducer.
+- All service Dockerfiles use `python:3.12-slim`. Running tests and lint in that same Debian-based Python environment removes runner-specific font/rasterization differences from the snapshot checks while leaving Compose validation and image builds on the GitHub host.
 
 ### Tasks completed
 
-- Updated `.github/workflows/ci.yml` to install `fonts-dejavu-core` in the Python 3.12 checks job and verify the exact font path exists before running tests. This aligns test setup with the runtime image's declared font dependency.
-- Observed the red CI result in run `36190870337`; after the workflow change, the current font-equipped local Python 3.12 environment passed the full project suite (`117 passed in 3.91s`). Ruff passed, and `docker compose config --quiet` passed.
+- Updated `.github/workflows/ci.yml` to run the full Python test and lint commands inside a disposable `python:3.12-slim` container with the same DejaVu font dependency as the display image. Compose validation and service-image builds remain on the hosted runner.
+- Re-ran the exact new workflow test/lint command in a disposable `python:3.12-slim` container: `117 passed in 4.07s` and Ruff passed. A clean Ubuntu 24.04 container also passed the full suite (`117 passed in 4.41s`); `docker compose config --quiet` passed.
 
 ### How it went
 
-- The Home Assistant CI job was already passing; no HA code or workflow change was needed. The fix is limited to the missing renderer system dependency in the checks job.
-- A new GitHub Actions run is required to confirm the Ubuntu hosted runner now produces the committed pixel snapshots with the explicitly installed font.
+- The Home Assistant CI job passed in run `36191766201`; no HA code or workflow change was needed. The first hosted-runner font installation did not fix the snapshot failures.
+- A new GitHub Actions run is required to confirm the isolated Python 3.12 service environment passes both test and lint steps on GitHub.
 
 ### Next steps
 
-1. Commit and push the CI font setup change to `main`.
+1. Commit and push the isolated CI test environment to `main`.
 2. Confirm the resulting GitHub Actions run passes both jobs; record the run URL and result.

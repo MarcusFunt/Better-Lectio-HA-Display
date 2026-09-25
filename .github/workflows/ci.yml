@@ -28,22 +28,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Install test and service dependencies
+      - name: Run tests and lint in the service Python environment
         run: |
-          python -m pip install -r requirements-dev.txt
-          python -m pip install -e "services/lectio-gateway[test,lint]" -e "services/lectio-auth-browser" -e "services/lectio-auth-lifecycle[test]" -e "services/display-service[test,lint]"
-      - name: Install the renderer font
-        run: |
-          sudo apt-get update
-          sudo apt-get install --no-install-recommends --yes fonts-dejavu-core
-          test -f /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf
-      - name: Run tests
-        run: make test
-      - name: Run lint
-        run: make lint
+          docker run --rm \
+            --mount "type=bind,source=${GITHUB_WORKSPACE},target=/workspace" \
+            --workdir /workspace \
+            python:3.12-slim \
+            sh -ec '
+              apt-get update
+              apt-get install --no-install-recommends --yes fonts-dejavu-core make
+              python -m pip install -r requirements-dev.txt
+              python -m pip install -e "services/lectio-gateway[test,lint]" -e "services/lectio-auth-browser" -e "services/lectio-auth-lifecycle[test]" -e "services/display-service[test,lint]"
+              make test
+              make lint
+            '
       - name: Validate Compose configuration
         run: make compose-config
       - name: Build service images
