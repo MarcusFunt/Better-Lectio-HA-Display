@@ -1773,3 +1773,31 @@ This section is the canonical running record for agent evidence, completed work,
 
 1. After the user authorizes ending the current temporary browser context, add diagnostics that report only identity-cookie presence/format and Lectio-cookie count, rebuild/recreate auth-browser, then have the user sign in again.
 2. Use the redacted diagnostics to fix candidate extraction, then validate and persist the session through the gateway.
+
+## 2026-09-25 — Add redacted browser cookie diagnostics
+
+### Evidence and findings
+
+- The screenshot still shows a signed-in Lectio dashboard while gateway capture requires numeric `LastLoginExamno` and `LastLoginElevId` cookie values. Until a redacted check inspects the browser context, the exact capture failure remains unknown.
+- The previously active auth-browser container was already absent from Docker when this work resumed, so its temporary browser context had ended before any action in this turn. The user approved restarting and diagnosing; no prior live browser was available to terminate.
+- Added an internal `GET /session/diagnostics` endpoint that reports browser state, whether a context is available, the Lectio cookie count, and each expected identity cookie's status (`missing`, `non_numeric`, `numeric`, or `unavailable`). It does not return cookie names or values and is hidden from the OpenAPI schema.
+- The auth-browser API port remains unpublished to the host. After starting the new browser, Docker port inspection showed only noVNC on `127.0.0.1:6080`.
+
+### Tasks completed
+
+- Added `BrowserControl.diagnostics()` and the redacted diagnostics route.
+- Added route tests for numeric, non-numeric, missing, and unavailable cookie states, including assertions that synthetic cookie values do not appear in the response.
+- Rebuilt `better-lectio-auth-browser:local` and started a fresh login flow through the gateway; the start response was `STARTING_BROWSER` and the managed browser container is running.
+
+### How it went
+
+- The first new route test failed as expected with HTTP 404 before the endpoint was implemented. The auth-browser test file then passed (4 tests).
+- The first full-suite runner lacked the root project's legacy dev dependencies, so test collection stopped on missing Pillow, Flask, and PyYAML. With `requirements-dev.txt` and all service test extras installed, the complete suite passed: `46 passed in 2.43s`. Ruff selected rules passed. `docker compose --profile auth-browser config --quiet` passed, and the updated browser image built successfully.
+- No real cookie values were retrieved, returned, logged, copied, or modified. The new route has only been exercised with synthetic test cookies. No Lectio/MitID sign-in or real gateway validation has been performed by the agent.
+- The new temporary browser is awaiting the user's manual sign-in. Milestone 2 remains partial pending redacted runtime diagnosis, candidate capture, gateway validation, and persistence.
+
+### Next steps
+
+1. Have the user manually complete Lectio/MitID sign-in in the fresh browser at `http://localhost:8000/auth/browser`.
+2. Query only `/session/diagnostics` after sign-in. Use the returned categories to identify and test the smallest candidate-extraction change if the expected cookies are absent or non-numeric.
+3. If capture succeeds, verify gateway authentication and persistence without printing or recording cookie values; keep Milestone 2 partial until that real flow succeeds.

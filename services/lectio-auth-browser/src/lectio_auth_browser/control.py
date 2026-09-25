@@ -43,6 +43,48 @@ class BrowserControl:
     async def snapshot(self) -> dict[str, object]:
         return {"state": self.state, "session": self._candidate}
 
+    async def diagnostics(self) -> dict[str, object]:
+        context = self._context
+        if context is None:
+            return {
+                "state": self.state,
+                "available": False,
+                "lectio_cookie_count": None,
+                "school_id_cookie": "unavailable",
+                "student_id_cookie": "unavailable",
+            }
+
+        cookies = await context.cookies()
+        identity_cookie_states = {
+            "school_id": "missing",
+            "student_id": "missing",
+        }
+        lectio_cookie_count = 0
+        for cookie in cookies:
+            domain = str(cookie.get("domain") or "").lower().lstrip(".")
+            if domain != "lectio.dk" and not domain.endswith(".lectio.dk"):
+                continue
+
+            lectio_cookie_count += 1
+            name = str(cookie.get("name") or "")
+            identity_field = _IDENTITY_COOKIE_NAMES.get(name.casefold())
+            if identity_field is None:
+                continue
+
+            value = str(cookie.get("value") or "")
+            if _NUMERIC_ID.fullmatch(value):
+                identity_cookie_states[identity_field] = "numeric"
+            elif identity_cookie_states[identity_field] == "missing":
+                identity_cookie_states[identity_field] = "non_numeric"
+
+        return {
+            "state": self.state,
+            "available": True,
+            "lectio_cookie_count": lectio_cookie_count,
+            "school_id_cookie": identity_cookie_states["school_id"],
+            "student_id_cookie": identity_cookie_states["student_id"],
+        }
+
     async def complete(self) -> None:
         if self.state != "candidate" or self._complete_event is None:
             raise RuntimeError("There is no validated browser session to complete")

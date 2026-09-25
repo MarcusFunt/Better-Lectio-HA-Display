@@ -47,6 +47,11 @@ async def session_status(request: Request) -> dict[str, object]:
     return await _control(request).snapshot()
 
 
+@app.get("/session/diagnostics", include_in_schema=False)
+async def session_diagnostics(request: Request) -> dict[str, object]:
+    return await _control(request).diagnostics()
+
+
 @app.post("/session/complete")
 async def complete_session(request: Request) -> dict[str, str]:
     try:
