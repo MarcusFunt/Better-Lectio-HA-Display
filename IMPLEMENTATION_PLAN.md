@@ -2393,9 +2393,8 @@ This section is the canonical running record for agent evidence, completed work,
 ### How it went
 
 - The Home Assistant CI job passed in run `36191766201`; no HA code or workflow change was needed. The first hosted-runner font installation did not fix the snapshot failures.
-- A new GitHub Actions run is required to confirm the isolated Python 3.12 service environment passes both test and lint steps on GitHub.
+- GitHub Actions run [`36192849340`](https://github.com/MarcusFunt/Better-Lectio-HA-Display/actions/runs/36192849340) for commit `f192aac` passed both jobs: the service-environment tests/lint, Compose validation, image builds, and the Home Assistant integration checks.
 
 ### Next steps
 
-1. Commit and push the isolated CI test environment to `main`.
-2. Confirm the resulting GitHub Actions run passes both jobs; record the run URL and result.
+1. No further repair steps remain for this CI failure; investigate any later failures from their specific run logs.
