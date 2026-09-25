@@ -1749,3 +1749,27 @@ This section is the canonical running record for agent evidence, completed work,
 
 1. Open `http://localhost:8000/auth/browser`, start browser login, and manually complete Lectio/MitID authentication; confirm candidate capture, gateway validation, and session persistence.
 2. Keep Milestone 2 partial until that real-account flow succeeds. Then proceed to Milestone 3: normalized gateway APIs, per-source sync/cache, and stale-data resilience.
+
+## 2026-09-25 — Investigate signed-in browser not detected
+
+### Evidence and findings
+
+- The user-provided screenshot shows the Lectio student dashboard inside the temporary browser, while the gateway status remains `WAITING_FOR_USER` with null school/student IDs and no reported error.
+- A live read of `/auth/status` confirmed the same state. The auth-browser container is running; its recent logs show successful `/session/status` polling but no browser error.
+- `BrowserControl._make_candidate()` currently requires numeric `LastLoginExamno` and `LastLoginElevId` cookies. The status API does not reveal whether those names are missing, differently named, or holding values in another format, so the exact capture failure is unresolved.
+- The browser API is intentionally not host-published; a direct lookup from the Windows host did not resolve the container DNS name. No cookie values were retrieved, copied, logged, or changed.
+
+### Tasks completed
+
+- Compared the screenshot's visible login state with gateway/browser runtime status and the candidate-extraction requirements.
+- Left the active temporary browser session running and did not alter Lectio state.
+
+### How it went
+
+- This was read-only diagnosis. The Lectio page appears signed in, but the gateway has not received a candidate and has not begun session validation or persistence. Milestone 2 remains partial.
+- Determining cookie metadata safely requires a redacted diagnostic in the auth-browser and restarting its current temporary browser container; that will end this in-progress browser context and require another manual sign-in.
+
+### Next steps
+
+1. After the user authorizes ending the current temporary browser context, add diagnostics that report only identity-cookie presence/format and Lectio-cookie count, rebuild/recreate auth-browser, then have the user sign in again.
+2. Use the redacted diagnostics to fix candidate extraction, then validate and persist the session through the gateway.
