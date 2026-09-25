@@ -1,91 +1,309 @@
 # Better Lectio HA Display
 
-A small home-hosted TRMNL BYOS server for an 800×480 monochrome e-paper display. It combines a Lectio timetable with an optional calendar ICS feed, renders a bitmap in advance, and serves it to the device on the local network.
+A self-hosted, Home Assistant-centered schedule display for an 800×480 monochrome e-paper device.
 
-## Features
+The project is being redesigned around a layered architecture:
 
-- Stock Seeed firmware support; no custom firmware build is required.
-- Stable device enrollment and authenticated display polling backed by SQLite.
-- Cache-busted 1-bit BMP output with immutable prior image URLs retained for seven days.
-- Lectio schedule fetching through `python-lectio`, preserving weekday placement from the authenticated week grid.
-- Optional ICS events, including all-day, recurring, moved, and cancelled instances.
-- Separate systemd web and refresh services for Raspberry Pi OS Lite.
+1. a **Lectio Gateway** that owns Lectio access and MitID-backed session handling;
+2. **Home Assistant** as the mandatory calendar/task middle layer;
+3. a **Display Service** that consumes Home Assistant data and renders the final bitmap;
+4. **custom display firmware** that is built with the repository and provisioned over USB.
 
-## Raspberry Pi Zero setup
+The physical display is local-only, permanently powered, and intended to stay connected to Wi-Fi. Remote human/admin access is provided through the user's Tailscale Tailnet rather than by exposing management services publicly.
 
-Use Raspberry Pi OS Lite 32-bit. Keep the service on your home LAN; do not forward port 5000 from the internet.
+> **Migration status:** the repository still contains code from the earlier TRMNL BYOS/Pi Zero prototype. That implementation is being replaced. Treat `ARCHITECTURE_AND_OPERATIONS.md` and `IMPLEMENTATION_PLAN.md` as the authoritative design and migration plan.
 
-```sh
-sudo apt update
-sudo apt install -y python3-venv fonts-dejavu-core
-sudo useradd --system --home /opt/trmnl-display --shell /usr/sbin/nologin trmnl
-sudo mkdir -p /opt/trmnl-display /var/lib/trmnl-display
-sudo chown -R trmnl:trmnl /opt/trmnl-display /var/lib/trmnl-display
+## Documentation
+
+Before changing the repository, read:
+
+- [AGENTS.md](AGENTS.md) — mandatory workflow rules for agents
+- [ARCHITECTURE_AND_OPERATIONS.md](ARCHITECTURE_AND_OPERATIONS.md) — architectural and operational source of truth
+- [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) — ordered implementation roadmap plus the canonical execution/evidence log
+
+The implementation plan is the only Markdown document used for routine progress notes, findings, task outcomes, and next-step tracking.
+
+## Intended architecture
+
+```text
+Lectio / MitID
+      │
+      ▼
+┌─────────────────────────────┐
+│ 1. Lectio Gateway           │
+│                             │
+│ - Playwright login          │
+│ - Lectio session storage    │
+│ - python-lectio adapter     │
+│ - schedule                  │
+│ - assignments               │
+│ - homework                  │
+│ - cancellations             │
+└──────────────┬──────────────┘
+               │ local API
+               ▼
+┌─────────────────────────────┐
+│ 2. Home Assistant           │
+│                             │
+│ - calendar.lectio           │
+│ - calendar.private          │
+│ - todo.lectio_assignments   │
+│ - todo.lectio_homework      │
+│ - sensor.lectio_*           │
+└──────────────┬──────────────┘
+               │ HA API
+               ▼
+┌─────────────────────────────┐
+│ 3. Display Service          │
+│                             │
+│ - normalize HA data         │
+│ - prioritize sidebar        │
+│ - render 800×480 1-bit BMP  │
+│ - serve local device API    │
+└──────────────┬──────────────┘
+               │ LAN
+               ▼
+┌─────────────────────────────┐
+│ 3.5 Custom Firmware         │
+│                             │
+│ - USB provisioned           │
+│ - per-device credential     │
+│ - persistent Wi-Fi          │
+│ - authenticated image fetch │
+└─────────────────────────────┘
 ```
 
-Clone the repository into `/opt/trmnl-display`, then install dependencies. Raspberry Pi OS configures piwheels for ARM wheels; it is also specified explicitly:
+## Lectio and MitID
 
-```sh
-cd /opt/trmnl-display
-sudo -u trmnl git clone https://github.com/MarcusFunt/Better-Lectio-HA-Display.git .
-sudo -u trmnl python3 -m venv .venv
-sudo -u trmnl .venv/bin/pip install --extra-index-url https://www.piwheels.org/simple -r requirements.txt
+Lectio access is isolated in the Lectio Gateway.
+
+The project uses the `python-lectio` code lineage behind an internal adapter for schedule, homework, assignments, cancellations, and related Lectio data. Application code outside that adapter should not depend directly on `lectio.sdk` or raw Lectio HTML/data structures.
+
+MitID authentication is deliberately separate from normal Lectio data access.
+
+The planned authentication rollout is:
+
+1. **Phase 1 — Playwright Chromium**
+   - start a temporary Chromium session;
+   - the user performs the real Lectio/MitID login manually;
+   - capture the resulting authenticated Lectio cookies/session;
+   - validate them through the Lectio adapter;
+   - persist the session and terminate Chromium.
+
+2. **Phase 2 — inspect the authenticated browser/session flow**
+   - document redirects, cookies, expiry behavior, and the minimum session state required;
+   - add regression coverage around browser-session import.
+
+3. **Phase 3 — streamlined login if feasible**
+   - replace normal remote-browser use with a clean `/auth/login` browser flow;
+   - keep Playwright browser login as the recovery fallback.
+
+MitID itself is not automated.
+
+## Home Assistant
+
+Home Assistant is the required application-level middle layer.
+
+Lectio data is exposed through a custom HA integration approximately as:
+
+```text
+calendar.lectio
+todo.lectio_assignments
+todo.lectio_homework
+sensor.lectio_cancellations
+sensor.lectio_session_status
+sensor.lectio_last_sync
 ```
 
-Create `/etc/trmnl-display.env` from `.env.example`; set `PUBLIC_BASE_URL` to a static LAN address or mDNS name resolvable by the display. Fill all three Lectio settings to enable timetable fetching, and set `CALENDAR_ICS_URL` to enable a calendar feed. Protect the file because a calendar URL may contain a private token:
+Private events are created through the normal Home Assistant calendar UI, for example in:
 
-```sh
-sudo cp -n .env.example /etc/trmnl-display.env
-sudo chown root:trmnl /etc/trmnl-display.env
-sudo chmod 0640 /etc/trmnl-display.env
-sudoedit /etc/trmnl-display.env
+```text
+calendar.private
 ```
 
-Install and start systemd units:
+The Display Service reads Home Assistant rather than bypassing it with direct Lectio or ICS access.
 
-```sh
-sudo install -m 0644 systemd/trmnl-display.service /etc/systemd/system/
-sudo install -m 0644 systemd/trmnl-refresh.service /etc/systemd/system/
-sudo install -m 0644 systemd/trmnl-refresh.timer /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now trmnl-display.service trmnl-refresh.timer
-sudo systemctl start trmnl-refresh.service
+Assignments and homework are initially read-only HA todo entities. Marking an HA item complete must not silently modify or submit anything in Lectio.
+
+## Display layout
+
+The display is a single chronological schedule covering:
+
+- today;
+- tomorrow;
+- the day after tomorrow.
+
+Lectio lessons and private Home Assistant events are merged onto the same timeline.
+
+Lectio lesson blocks should show:
+
+- time;
+- subject;
+- teacher;
+- room.
+
+A narrow right-hand sidebar is reserved for attention items with this fixed category priority:
+
+```text
+cancellations
+    ↓
+assignments
+    ↓
+homework
 ```
 
-In the TRMNL setup portal, choose the custom server option and enter `http://<pi-address>:5000`. Check `http://<pi-address>:5000/health` from another LAN device.
+Within each category, nearer and more urgent items rank first.
 
-## Configuration
+The rendering target remains:
 
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `PUBLIC_BASE_URL` | Request host | Absolute LAN base URL returned to device |
-| `REFRESH_RATE` | `1800` | Device poll interval, 60–21600 seconds |
-| `TIMEZONE` | `Europe/Copenhagen` | Schedule display timezone |
-| `DATABASE_PATH` | `data/devices.sqlite3` | Device registry |
-| `IMAGE_PATH` | `data/current.bmp` | Current rendered image |
-| `CACHE_PATH` | `data/events.json` | Cached normalized events |
-| `LECTIO_USERNAME` | empty | Lectio username |
-| `LECTIO_PASSWORD` | empty | Lectio password |
-| `LECTIO_SCHOOL_ID` | empty | Numeric school ID |
-| `LECTIO_CACHE_TTL_SECONDS` | `3600` | Lectio cache lifetime |
-| `CALENDAR_ICS_URL` | empty | Optional ICS feed |
-| `CALENDAR_CACHE_TTL_SECONDS` | `900` | Calendar cache lifetime |
-
-The refresh timer runs every 15 minutes. Lectio is fetched at most once an hour by default; the ICS feed is fetched every 15 minutes. Cached events contain only one-way fingerprints of credential/feed identities. If a source fetch fails, the previous image remains in place. The refresh service has a 180-second startup timeout so a stalled SDK login cannot block later timer runs.
-
-## API
-
-- `GET /api/setup` and `/api/setup/`: firmware enrollment with `ID` header; setup JSON uses `status: 200`.
-- `GET /api/display`: requires `ID` and `Access-Token`; success JSON uses `status: 0` and includes a content-derived filename, image URL, refresh rate, and firmware flags.
-- `GET /display/<hash>.bmp`: serves immutable content-addressed images retained for seven days.
-- `POST /api/log`: accepts diagnostics without persisting request content.
-- `GET /health`: LAN health check.
-
-## Development
-
-```sh
-python3 -m pip install -r requirements.txt
-python3 -m unittest discover -s tests -v
+```text
+800 × 480
+1-bit monochrome
+BMP
 ```
 
-To render once, run `python3 -m trmnl_schedule.refresh`. To serve locally, run `waitress-serve --listen=127.0.0.1:5000 --threads=1 trmnl_schedule.wsgi:app`.
+Content-addressed image versions are preferred so the device can avoid unnecessary e-paper refreshes.
+
+## Display firmware
+
+The final system does **not** use stock TRMNL firmware.
+
+The upstream/open firmware may be used as a hardware-driver reference or starting fork, but the repository will own the firmware behavior.
+
+The display is:
+
+- LAN-only;
+- always plugged in;
+- not battery-optimized;
+- expected to remain connected to Wi-Fi;
+- free to check for new content frequently.
+
+The normal firmware loop is intentionally small:
+
+```text
+connect Wi-Fi
+     ↓
+authenticate to local display service
+     ↓
+check content hash
+     ↓
+download only when changed
+     ↓
+validate bitmap
+     ↓
+refresh e-paper
+```
+
+A temporary network/server failure must leave the last valid image on the display.
+
+## USB provisioning
+
+Firmware compilation and device provisioning are separate operations.
+
+The firmware binary must contain no per-device secret.
+
+A USB provisioning tool will:
+
+1. connect to the device;
+2. optionally flash the current generic firmware;
+3. generate a device ID;
+4. generate a cryptographically secure per-device credential;
+5. register that device with the Display Service;
+6. write Wi-Fi configuration and the device credential over USB;
+7. reboot;
+8. verify authenticated communication.
+
+The intended command surface is roughly:
+
+```sh
+make firmware
+make flash PORT=/dev/ttyACM0
+make provision PORT=/dev/ttyACM0
+```
+
+These commands describe the target workflow; they should not be assumed to exist until their implementation milestone is complete.
+
+## Deployment and networking
+
+The target deployment is **Docker Compose on a desktop/server host**, not a Raspberry Pi Zero/systemd deployment.
+
+Logical services are expected to include:
+
+```text
+lectio-gateway
+lectio-auth-browser
+lectio-auth-view
+display-service
+```
+
+The repository integrates with an existing Home Assistant instance by default; it does not need to own the HA deployment itself.
+
+### LAN display traffic
+
+The physical e-paper display communicates directly with the Display Service over the local network using its USB-provisioned per-device credential.
+
+The device does not need Tailscale.
+
+### Remote human/admin access
+
+Management, diagnostics, and Lectio reauthentication should be reachable through the user's Tailscale Tailnet, preferably using Tailscale Serve and Tailnet ACLs.
+
+Do not require:
+
+- public router port forwarding;
+- a public reverse proxy;
+- Tailscale Funnel;
+- public exposure of the MitID/Lectio login UI.
+
+## Failure behavior
+
+The new architecture is designed to degrade per source rather than fail all-or-nothing.
+
+Examples:
+
+- Lectio fails temporarily → keep last-known-good Lectio data;
+- assignments fail → calendar rendering can still continue;
+- Home Assistant private events change → they can still update independently;
+- a render fails → continue serving the previous valid bitmap;
+- Lectio authentication expires → retain stale Lectio-derived data and report that reauthentication is required.
+
+Each service should expose enough health/status information to identify which layer is stale or failing.
+
+## Security rules
+
+- MitID login remains manual.
+- Lectio browser cookies/session state are secrets.
+- Home Assistant tokens, Lectio sessions, Wi-Fi credentials, and device secrets must never be committed.
+- Logs must redact sensitive values.
+- Device credentials are generated with a cryptographically secure RNG.
+- Per-device credentials are provisioned over USB, not baked into firmware.
+- Device authentication must not rely on MAC address alone.
+- Remote administration uses Tailscale rather than public exposure.
+
+## Current implementation status
+
+The repository is in an architectural migration.
+
+The existing `trmnl_schedule/`, `systemd/`, legacy `.env.example`, and related tests/configuration belong to the earlier prototype and do not define the target architecture.
+
+The next implementation focus is the first vertical slice:
+
+```text
+Docker Compose
+      ↓
+Lectio Gateway
+      ↓
+temporary Playwright Chromium
+      ↓
+manual MitID login
+      ↓
+capture Lectio session
+      ↓
+python-lectio validation
+      ↓
+normalized schedule / homework / assignments / cancellations
+```
+
+Only after that path is proven against the real Lectio environment should substantial effort move into the Home Assistant integration, final renderer, device API, firmware, and USB provisioning.
+
+See [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) for the full ordered milestones and the current execution log.
