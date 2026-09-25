@@ -1854,6 +1854,31 @@ This section is the canonical running record for agent evidence, completed work,
 2. Confirm the address is the default `SkemaNy.aspx` route, then recheck redacted diagnostics for `default_schedule_url: true` and `candidate_available: true`.
 3. Verify gateway authentication and session-file existence without reading session contents.
 
+## 2026-09-25 — Live Lectio session validated and persisted
+
+### Evidence and findings
+
+- After the user navigated to the account's own Skema page, the gateway's `/auth/status` reported `AUTHENTICATED`.
+- The gateway implementation validates a candidate with `LectioClient.validate_session()`, saves the verified session, assigns it to the active manager, and only then sets `AUTHENTICATED` (`services/lectio-gateway/src/lectio_gateway/auth/manager.py`).
+- A filesystem metadata check confirmed `/var/lib/better-lectio/lectio-session.json` exists. The file was not opened or read.
+- A subsequent attempt to query auth-browser diagnostics could not resolve that container's DNS name. No session values or identifiers were needed to confirm the gateway result.
+
+### Tasks completed
+
+- Confirmed real Lectio session validation and persistence from the gateway's authenticated state and session-file existence.
+- No cookie values, session contents, school/student identifiers, or student names were retrieved, logged, copied, or recorded.
+
+### How it went
+
+- The default schedule flow now completes end to end: manual login, candidate capture, gateway schedule validation, private persistence, and authenticated state. This is real account integration evidence, not a fixture or mocked test.
+- The authenticated session does not expose a student ID, so schedule access is supported while assignments and homework remain explicitly unavailable in this mode.
+- Milestone 2's authentication objective is complete. Continue with Milestone 3: normalized gateway APIs, per-source sync/cache, and stale-data resilience.
+
+### Next steps
+
+1. Proceed with Milestone 3 implementation using the persisted session without displaying or logging its contents.
+2. Keep assignments and homework marked unavailable until a supported source provides a student ID.
+
 ## 2026-09-25 — Diagnose missing Lectio identity cookies
 
 ### Evidence and findings
