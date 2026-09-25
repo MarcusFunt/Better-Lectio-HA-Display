@@ -15,11 +15,15 @@ async def lifespan(app: FastAPI):
     manager = AuthManager(
         data_dir=Path(os.getenv("LECTIO_DATA_DIR", "/var/lib/better-lectio")),
         browser_url=os.getenv(
-            "LECTIO_AUTH_BROWSER_URL", "http://lectio-auth-browser:8765"
+            "LECTIO_AUTH_BROWSER_URL",
+            "http://better-lectio-ha-display-lectio-auth-browser:8765",
         ),
         browser_view_url=os.getenv(
             "LECTIO_AUTH_BROWSER_VIEW_URL",
             "http://localhost:6080/vnc.html?autoconnect=true&resize=scale",
+        ),
+        lifecycle_url=os.getenv(
+            "LECTIO_AUTH_LIFECYCLE_URL", "http://lectio-auth-lifecycle:8766"
         ),
         login_url=os.getenv("LECTIO_LOGIN_URL", "https://www.lectio.dk/"),
         timeout_seconds=int(os.getenv("LECTIO_AUTH_TIMEOUT_SECONDS", "900")),
@@ -107,11 +111,18 @@ async def auth_browser(request: Request) -> HTMLResponse:
   <button onclick="action('/auth/cancel')">Cancel</button>
   <button onclick="action('/auth/logout')">Log out</button>
   <pre id="status">Loading status…</pre>
-  <iframe title="Temporary Lectio browser" src="{view_url}" allow="clipboard-read; clipboard-write"></iframe>
+  <iframe id="browser-view" title="Temporary Lectio browser" src="about:blank" data-view-url="{view_url}" allow="clipboard-read; clipboard-write"></iframe>
   <script>
     async function refresh() {{
       const response = await fetch('/auth/status', {{ cache: 'no-store' }});
-      document.getElementById('status').textContent = JSON.stringify(await response.json(), null, 2);
+      const status = await response.json();
+      document.getElementById('status').textContent = JSON.stringify(status, null, 2);
+      const browserView = document.getElementById('browser-view');
+      if (status.state === 'WAITING_FOR_USER') {{
+        if (browserView.src === 'about:blank') browserView.src = browserView.dataset.viewUrl;
+      }} else if (browserView.src !== 'about:blank') {{
+        browserView.src = 'about:blank';
+      }}
     }}
     async function action(path) {{
       const response = await fetch(path, {{ method: 'POST', headers: {{ 'Content-Type': 'application/json' }} }});

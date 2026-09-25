@@ -76,7 +76,7 @@ class BrowserControl:
             await page.goto(login_url, wait_until="domcontentloaded", timeout=60_000)
             self.state = "waiting_for_user"
             while asyncio.get_running_loop().time() < deadline:
-                cookies = await self._context.cookies(_LECTIO_ORIGIN)
+                cookies = await self._context.cookies()
                 candidate = self._make_candidate(cookies)
                 if candidate is not None:
                     if self._candidate is None or any(

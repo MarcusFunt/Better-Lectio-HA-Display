@@ -11,11 +11,13 @@ def test_compose_builds_gateway_and_display_as_separate_internal_services():
     assert set(compose["services"]) == {
         "lectio-gateway",
         "lectio-auth-browser",
+        "lectio-auth-lifecycle",
         "display-service",
     }
     for name, path in {
         "lectio-gateway": "services/lectio-gateway",
         "lectio-auth-browser": "services/lectio-auth-browser",
+        "lectio-auth-lifecycle": "services/lectio-auth-lifecycle",
         "display-service": "services/display-service",
     }.items():
         service = compose["services"][name]
@@ -30,10 +32,30 @@ def test_compose_builds_gateway_and_display_as_separate_internal_services():
     assert compose["services"]["lectio-auth-browser"]["ports"] == [
         "127.0.0.1:6080:6080"
     ]
-    assert "ports" not in compose["services"]["display-service"]
+    assert compose["services"]["lectio-auth-browser"]["profiles"] == ["auth-browser"]
     assert compose["services"]["lectio-auth-browser"]["networks"] == [
+        "lectio-auth-runtime"
+    ]
+    assert compose["services"]["lectio-auth-lifecycle"]["networks"] == [
         "lectio-auth-control"
     ]
+    assert compose["services"]["lectio-gateway"]["environment"][
+        "LECTIO_AUTH_BROWSER_URL"
+    ] == "http://${COMPOSE_PROJECT_NAME:-better-lectio-ha-display}-lectio-auth-browser:8765"
+    assert compose["services"]["lectio-auth-lifecycle"]["environment"][
+        "LECTIO_AUTH_BROWSER_CONTAINER"
+    ] == "${COMPOSE_PROJECT_NAME:-better-lectio-ha-display}-lectio-auth-browser"
+    assert compose["services"]["lectio-auth-lifecycle"]["volumes"] == [
+        "/var/run/docker.sock:/var/run/docker.sock"
+    ]
+    assert "/var/run/docker.sock:/var/run/docker.sock" not in compose["services"][
+        "lectio-gateway"
+    ].get("volumes", [])
+    assert "lectio-auth-runtime" in compose["services"]["lectio-gateway"]["networks"]
+    assert "depends_on" not in compose["services"]["lectio-gateway"] or set(
+        compose["services"]["lectio-gateway"]["depends_on"]
+    ) == {"lectio-auth-lifecycle"}
+    assert "ports" not in compose["services"]["display-service"]
     assert "lectio-auth-control" in compose["services"]["lectio-gateway"]["networks"]
 
 

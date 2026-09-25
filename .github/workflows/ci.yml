@@ -18,7 +18,7 @@ jobs:
       - name: Install test and service dependencies
         run: |
           python -m pip install -r requirements-dev.txt
-          python -m pip install -e "services/lectio-gateway[test,lint]" -e "services/display-service[test,lint]"
+          python -m pip install -e "services/lectio-gateway[test,lint]" -e "services/lectio-auth-browser" -e "services/lectio-auth-lifecycle[test]" -e "services/display-service[test,lint]"
       - name: Run tests
         run: make test
       - name: Run lint

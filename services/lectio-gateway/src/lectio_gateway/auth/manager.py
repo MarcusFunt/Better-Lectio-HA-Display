@@ -54,6 +54,7 @@ class AuthManager:
         data_dir: Path,
         browser_url: str,
         browser_view_url: str,
+        lifecycle_url: str = "http://lectio-auth-lifecycle:8766",
         login_url: str,
         timeout_seconds: int = 900,
         poll_seconds: float = 2.0,
@@ -61,7 +62,12 @@ class AuthManager:
         self._data_dir = data_dir
         self._session_path = data_dir / "lectio-session.json"
         self._status_path = data_dir / "auth-status.json"
-        self._browser = AuthBrowserClient(browser_url, login_url, timeout_seconds)
+        self._browser = AuthBrowserClient(
+            browser_url,
+            login_url,
+            timeout_seconds,
+            lifecycle_url=lifecycle_url,
+        )
         self.browser_view_url = browser_view_url
         self.timeout_seconds = timeout_seconds
         self.poll_seconds = poll_seconds
@@ -74,6 +80,8 @@ class AuthManager:
         )
 
     async def initialize(self) -> None:
+        # A restarted gateway cannot resume a browser flow that it no longer owns.
+        await self._browser.stop()
         self._data_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         try:
             os.chmod(self._data_dir, 0o700)

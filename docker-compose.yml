@@ -1,3 +1,5 @@
+name: ${COMPOSE_PROJECT_NAME:-better-lectio-ha-display}
+
 services:
   lectio-gateway:
     build:
@@ -6,7 +8,8 @@ services:
     restart: unless-stopped
     environment:
       LECTIO_DATA_DIR: /var/lib/better-lectio
-      LECTIO_AUTH_BROWSER_URL: http://lectio-auth-browser:8765
+      LECTIO_AUTH_BROWSER_URL: http://${COMPOSE_PROJECT_NAME:-better-lectio-ha-display}-lectio-auth-browser:8765
+      LECTIO_AUTH_LIFECYCLE_URL: http://lectio-auth-lifecycle:8766
       LECTIO_AUTH_BROWSER_VIEW_URL: ${LECTIO_AUTH_BROWSER_VIEW_URL:-http://localhost:6080/vnc.html?autoconnect=true&resize=scale}
       LECTIO_AUTH_TIMEOUT_SECONDS: ${LECTIO_AUTH_TIMEOUT_SECONDS:-900}
       LECTIO_LOGIN_URL: https://www.lectio.dk/
@@ -20,8 +23,9 @@ services:
     networks:
       - default
       - lectio-auth-control
+      - lectio-auth-runtime
     depends_on:
-      lectio-auth-browser:
+      lectio-auth-lifecycle:
         condition: service_healthy
     healthcheck:
       test:
@@ -35,10 +39,13 @@ services:
       start_period: 10s
 
   lectio-auth-browser:
+    image: better-lectio-auth-browser:local
     build:
       context: ./services/lectio-auth-browser
     init: true
-    restart: unless-stopped
+    profiles:
+      - auth-browser
+    restart: "no"
     shm_size: 1gb
     environment:
       TZ: ${TIMEZONE:-Europe/Copenhagen}
@@ -47,7 +54,7 @@ services:
     ports:
       - "127.0.0.1:6080:6080"
     networks:
-      - lectio-auth-control
+      - lectio-auth-runtime
     healthcheck:
       test:
         - CMD
@@ -58,6 +65,33 @@ services:
       timeout: 3s
       retries: 3
       start_period: 15s
+
+  lectio-auth-lifecycle:
+    build:
+      context: ./services/lectio-auth-lifecycle
+    init: true
+    restart: unless-stopped
+    environment:
+      LECTIO_AUTH_BROWSER_IMAGE: better-lectio-auth-browser:local
+      LECTIO_AUTH_BROWSER_CONTAINER: ${COMPOSE_PROJECT_NAME:-better-lectio-ha-display}-lectio-auth-browser
+      LECTIO_AUTH_RUNTIME_NETWORK: ${COMPOSE_PROJECT_NAME:-better-lectio-ha-display}_lectio-auth-runtime
+      TZ: ${TIMEZONE:-Europe/Copenhagen}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    expose:
+      - "8766"
+    networks:
+      - lectio-auth-control
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8766/health', timeout=2)"
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
 
   display-service:
     build:
@@ -91,3 +125,5 @@ volumes:
 networks:
   default:
   lectio-auth-control:
+  lectio-auth-runtime:
+    name: ${COMPOSE_PROJECT_NAME:-better-lectio-ha-display}_lectio-auth-runtime

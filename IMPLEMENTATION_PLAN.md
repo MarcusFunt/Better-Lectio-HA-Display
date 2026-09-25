@@ -1641,3 +1641,111 @@ This section is the canonical running record for agent evidence, completed work,
 
 1. Open `http://localhost:8000/auth/browser`, start browser login, and manually complete Lectio/MitID authentication.
 2. Confirm the gateway validates the real session and persists it before treating Milestone 2's end-to-end criteria as complete.
+
+## 2026-09-25 — Fix Lectio sign-in cookie capture
+
+### Evidence and findings
+
+- The embedded Chromium view was showing the Lectio site, but the auth controller stayed in `waiting_for_user` and did not emit a session candidate. The gateway therefore had nothing to validate; this was upstream of gateway session validation.
+- `BrowserControl` requested cookies only for `https://www.lectio.dk`. Playwright can omit host-only cookies scoped to `lectio.dk` from a URL-filtered request. A regression test models that behavior and verifies the candidate still contains only Lectio-domain cookies.
+- The focused regression test failed against the URL-filtered implementation and passed after switching to an unfiltered browser-context cookie read. Candidate construction continues to filter cookies to `lectio.dk` and its subdomains.
+- The complete project test suite, including the new auth-browser tests, passed in the supported Python 3.12 container: `35 passed in 0.59s`.
+- Rebuilt and force-recreated `lectio-auth-browser` and `lectio-gateway`. `docker compose ps` reports all three services healthy. Gateway `/health` returned `ok`, `/auth/status` returned `LOGIN_REQUIRED`, the local sign-in page returned HTTP 200, and the auth-browser's internal `/health` returned `ok` with browser state `idle`.
+
+### Tasks completed
+
+- Changed cookie retrieval to inspect the full browser context, leaving Lectio-domain filtering in candidate construction.
+- Added `services/lectio-auth-browser/tests/test_control.py` and included the auth-browser package/tests in `Makefile`'s `install-dev` and `test` targets.
+- Rebuilt the local containers with the fix. The previous temporary browser session was reset during recreation.
+
+### How it went
+
+- The regression test reproduced the missed-cookie condition before the implementation change and passed afterward; the full suite is green.
+- Service startup and local route health are verified. A real Lectio/MitID login and gateway validation remain unverified because the user must complete the manual sign-in flow.
+- No credential entry or authentication approval was performed by the agent.
+
+### Next steps
+
+1. Start the login flow again at `http://localhost:8000/auth/browser` and manually complete Lectio/MitID authentication.
+2. Confirm the controller emits a candidate and the gateway validates and persists the real session.
+
+## 2026-09-25 — Implementation-plan progress assessment
+
+### Evidence and findings
+
+- Read all repository Markdown files recursively before assessing status, as required by `AGENTS.md`.
+- The plan has 15 milestones, numbered 0 through 14. The execution log records Milestones 0 and 1 as complete. Milestone 2 (Phase-1 browser authentication) remains partial because the real Lectio/MitID sign-in and resulting session validation have not been confirmed.
+- Current gateway code includes the Lectio adapter and authentication routes/session handling. The display service still exposes only `/health`; no Home Assistant integration, display model/renderer, device API, firmware, or provisioning implementation is present.
+- The worktree is on `main` at `e6fa1eb` and contains local changes to `IMPLEMENTATION_PLAN.md`, `Makefile`, auth-browser cookie retrieval, and `tests/test_compose_scaffold.py`, plus an untracked `services/lectio-auth-lifecycle/` package. The changed Compose assertions expect a lifecycle service/profile/network arrangement that is not yet present in `docker-compose.yml`; the package is also not included in the Makefile or wired into the gateway/browser flow, so this remains in-progress work and does not yet close the logged browser-container lifecycle gap.
+- Compose and CI scaffolding are already present, but the broader operational-hardening and CI milestone requirements remain largely future work.
+
+### Tasks completed
+
+- Compared the roadmap and execution log with the current repository tree, relevant service entrypoints, Compose configuration, and worktree changes.
+- Recorded the progress estimate: 2 of 15 milestones are complete, Milestone 2 is underway, and Milestones 3–14 remain. This is only a raw milestone count: Milestones 0–2 contain unusually challenging, risk-heavy foundation work, so 2/15 understates effort completed. The plan has no estimates by effort, so a weighted completion percentage would be speculative.
+
+### How it went
+
+- This was a read-only status assessment apart from this required execution-log entry. No application code was changed and no tests were run.
+- The first major integration gate is still real account sign-in and session validation. Even after that, gateway API/resilience, Home Assistant, display model/rendering, device API, firmware, USB provisioning, and operations work remain.
+
+### Next steps
+
+1. Complete a manual real Lectio/MitID login and verify that the gateway validates and persists the session.
+2. Finish and integrate a least-privilege browser-container lifecycle approach; the current untracked prototype is not yet active in Compose or the authentication flow.
+3. Proceed to Milestone 3 (normalized gateway API, per-source sync/cache, and stale-data resilience), then continue through the HA/display/device milestones.
+
+## 2026-09-25 — Weighted progress estimate
+
+### Evidence and findings
+
+- The roadmap does not contain effort estimates, so this is a judgment-based estimate rather than measured project accounting.
+- Assumed relative effort weights for Milestones 0–14, summing to 100%: M0 8%, M1 12%, M2 15%, M3 8%, M4 10%, M5 5%, M6 7%, M7 5%, M8 9%, M9 5%, M10 4%, M11 3%, M12 2%, M13 4%, M14 3%.
+- Updated worktree evidence: after the initial assessment, uncommitted changes wired the browser lifecycle service into Compose, the gateway auth flow, Makefile, and CI. Those changes are present but have not been verified in this assessment; real-account sign-in remains unproven.
+- Estimated completion within those weights: M0 100%, M1 100%, M2 85% (auth flow and lifecycle wiring are implemented in the worktree, but real-account validation and checks remain), M13 30% (Compose health/restart foundations and lifecycle service exist), and M14 45% (baseline tests/lint/Compose/image CI, now including auth-browser/lifecycle coverage, are configured). Other milestone scopes are treated as 0% for this estimate.
+- Updated weighted result: 35.3%, rounded to about 35%. Given the subjective weights and completion assumptions, communicate this as roughly 33–38%, not a precise metric.
+
+### Tasks completed
+
+- Added an effort-weighted estimate in response to the user's correction that Milestones 0–2 are disproportionately challenging.
+
+### How it went
+
+- This is a planning estimate only; no code or milestone status changed and no tests were run.
+- The estimate reflects meaningful early risk reduction while keeping the real Lectio authentication proof as an open gate and recognizing that the major HA, rendering, device, firmware, and provisioning layers remain.
+
+### Next steps
+
+1. Replace these heuristic weights with effort estimates if a reliable project-level completion percentage is needed.
+2. Keep the real-account Phase-1 auth validation as the next major risk gate.
+
+## 2026-09-25 — Complete isolated auth-browser lifecycle wiring
+
+### Evidence and findings
+
+- Final review caught that Docker SDK's `ports: {"8765/tcp": None}` publishes the browser control API on a random host port. Removed that mapping. A live Docker inspection now shows only `6080/tcp` bound to `127.0.0.1:6080`; the browser API remains available to gateway containers on the private runtime network.
+- Serialized lifecycle start and stop routes with an app-scoped `asyncio.Lock`. A concurrent stop now waits for an in-progress container start to finish before removing it.
+- Gateway cleanup now retries a failed lifecycle stop once and logs a final error without including cookie/session values. The lifecycle service also removes any leftover browser during startup and shutdown.
+- Added regression coverage for the host port mapping, overlapping start/stop route calls, retry after a transient cleanup error, and logging after persistent cleanup failure.
+- The full supported Python 3.12 suite passed: `43 passed in 1.10s`. Ruff's selected repository lint rules passed. Compose configuration parsed successfully. The first lint run caught an unused `pytest` import in the new gateway test; removing it made the subsequent lint run clean.
+- Rebuilt and recreated `lectio-auth-lifecycle` and `lectio-gateway`. Live `POST /auth/start` reached `WAITING_FOR_USER`; the browser exposed only loopback noVNC; `POST /auth/cancel` returned `LOGIN_REQUIRED` and the browser container was removed.
+- No real Lectio or MitID sign-in was performed, and no credentials were entered. Milestone 2 remains partial until a user completes sign-in and the gateway validates and persists that real session.
+
+### Tasks completed
+
+- Completed Compose, CI, Makefile, and gateway integration for an on-demand browser container managed by a narrow lifecycle API.
+- Kept the Docker socket mount on the lifecycle supervisor only. The gateway has no Docker socket mount; it reaches the supervisor over the control network and the browser over the runtime network. The supervisor's Docker socket access remains a high-impact trust boundary: compromise of that container could control the Docker host.
+- Removed host publication of the browser API and serialized lifecycle operations to close the review findings.
+- Added bounded cleanup retry and error logging; retained startup cleanup as recovery for an orphaned browser.
+- Updated the canonical execution log here rather than creating separate progress or handoff Markdown, in accordance with `AGENTS.md`.
+
+### How it went
+
+- Unit and fixture coverage, lint, Compose parsing, image builds, and the live start/cancel container path all completed successfully. The live path verified service integration and port exposure only; it did not verify Lectio authentication.
+- The Ruff command explicitly selects `E4,E7,E9,F,I` to keep this repository's existing baseline stable under the current Ruff release. The broader default Ruff rule set is not being enforced by this change.
+- The control network is not marked `internal`; review treated that as a minor hardening opportunity, with the Docker socket remaining the dominant supervisor risk. It is deferred from this lifecycle fix.
+
+### Next steps
+
+1. Open `http://localhost:8000/auth/browser`, start browser login, and manually complete Lectio/MitID authentication; confirm candidate capture, gateway validation, and session persistence.
+2. Keep Milestone 2 partial until that real-account flow succeeds. Then proceed to Milestone 3: normalized gateway APIs, per-source sync/cache, and stale-data resilience.
