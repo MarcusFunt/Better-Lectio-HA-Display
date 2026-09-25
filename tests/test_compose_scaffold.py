@@ -5,7 +5,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_compose_builds_gateway_and_display_as_separate_internal_services():
+def test_compose_builds_gateway_and_display_as_separate_services():
     compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text())
 
     assert set(compose["services"]) == {
@@ -55,13 +55,20 @@ def test_compose_builds_gateway_and_display_as_separate_internal_services():
     assert "depends_on" not in compose["services"]["lectio-gateway"] or set(
         compose["services"]["lectio-gateway"]["depends_on"]
     ) == {"lectio-auth-lifecycle"}
-    assert "ports" not in compose["services"]["display-service"]
+    assert compose["services"]["display-service"]["ports"] == [
+        "${DISPLAY_BIND_ADDRESS:-127.0.0.1}:${DISPLAY_HOST_PORT:-8001}:8000"
+    ]
     assert "lectio-auth-control" in compose["services"]["lectio-gateway"]["networks"]
 
 
-def test_compose_only_publishes_auth_endpoints_on_loopback():
+def test_auth_endpoints_stay_on_loopback_and_display_port_is_configurable():
     compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text())
 
-    for service in compose["services"].values():
+    assert compose["services"]["display-service"]["ports"] == [
+        "${DISPLAY_BIND_ADDRESS:-127.0.0.1}:${DISPLAY_HOST_PORT:-8001}:8000"
+    ]
+    for name, service in compose["services"].items():
+        if name == "display-service":
+            continue
         for binding in service.get("ports", []):
             assert binding.startswith("127.0.0.1:")

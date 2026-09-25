@@ -2120,3 +2120,195 @@ This section is the canonical running record for agent evidence, completed work,
 1. Implement Milestone 6's renderer against the typed `DisplayModel`, preserving the single merged timeline and fixed sidebar hierarchy.
 2. Wire the renderer and model service into the display-service lifecycle and device-facing API in their planned milestones.
 3. Validate source entity IDs and freshness behavior against a live Home Assistant instance before claiming end-to-end integration verification.
+
+## 2026-09-25 — Draft Milestone 6 renderer design for review
+
+### Approved design sections
+
+- User approved a pure Pillow renderer as the selected approach. It accepts the existing typed `DisplayModel` only; it performs no Home Assistant requests or filesystem writes.
+- User approved a monochrome 800×480 layout with a compact full-width header, a 626 px schedule area, a 14 px gutter, a 120 px sidebar, and 20 px outer margins. The three dates appear as vertically stacked day sections; events stay chronological within each day. This gives the schedule approximately 84% and the sidebar approximately 16% of the content width.
+- User approved the overflow behavior: preserve visible event times, abbreviate teacher and room fields before truncating titles, show a per-day `+N more` count, and omit the lowest-priority sidebar items first while retaining a count of omitted items. Use black and white only; do not add a stale-data marker that is absent from `DisplayModel`.
+- User approved a `render_display(model)` contract returning deterministic 1-bit BMP bytes, a full SHA-256 content hash, and a content-addressed `<hash>.bmp` filename. The renderer does not write or publish the artifact; persistent publication remains for the later device/API milestone.
+- Use Pillow and the redistributable DejaVu Sans system font. Install Pillow in the display-service package and the font package in the display image; do not add source-specific columns or import the legacy renderer.
+
+### Proposed implementation and validation scope
+
+- Add `services/display-service/src/display_service/renderer.py` for the renderer and `RenderedDisplay` artifact type. Add `services/display-service/tests/test_renderer.py` and committed visual snapshots under `services/display-service/tests/snapshots/`.
+- Add snapshots for normal and dense days, no events, long labels, mixed private/Lectio events, cancellation-heavy sidebar, assignment-heavy sidebar, and homework fallback. Verify each artifact is BMP format, 800×480, mode `1`, and has a stable hash and filename for identical input.
+- Add Pillow to `services/display-service/pyproject.toml`; install DejaVu fonts in `services/display-service/Dockerfile` so the renderer uses a known system font in the service image.
+- Keep this milestone limited to rasterization and content identity. Do not add HA startup wiring, HTTP routes, image storage/publication, a device API, firmware, or a stale-data indicator here.
+
+### Design self-review
+
+- The proposal follows Milestone 6's image size, monochrome BMP format, approximate schedule/sidebar ratio, chronological schedule, and overflow requirements. It consumes the Milestone 5 model and preserves the mandatory Home Assistant boundary.
+- The older `trmnl_schedule.rendering` code renders separate Lectio and calendar columns and therefore does not meet the current design; only its Pillow/text-fitting techniques are candidates for reference. It will remain untouched.
+- This design entry is in the canonical implementation plan because `AGENTS.md` prohibits separate routine planning Markdown. The user approved each design section in chat and approved this written design. Implementation remains gated on review of the detailed task breakdown.
+
+### Next steps
+
+1. Review the detailed, test-first task breakdown in the later “Renderer implementation plan for review” entry; implementation is waiting on that review.
+2. After approval, continue with the user's requested inline implementation, then run renderer snapshots, repository tests and lint, Compose validation, and the display-service build.
+3. Record actual results and remaining live-HA or hardware checks in the execution log.
+
+## 2026-09-25 — Implement Milestone 7 display device API
+
+### Evidence and findings
+
+- The current checkout had the Milestone 5 typed model and Home Assistant client but no renderer or device routes; `display_service.main` exposed only `/health`. A usable image endpoint therefore also needed a rendering path from the current model.
+- Inspected the XIAO ESP32-S3 firmware client in the existing `feat/custom-firmware` worktree. It sends `Authorization: Bearer <secret>` and `X-Device-ID`, requests `/device/v1/display`, requires the image URL `/device/v1/image/<content_hash>.bmp`, polls at 30 seconds by default, and accepts only the 48,062-byte 800×480, 1-bit, uncompressed BMP layout (pixel offset 62, 40-byte DIB header, 48,000-byte pixel data).
+- The current firmware client does not send a firmware-version or last-applied-content-hash header. Those registry fields are retained but cannot be populated from this client contract yet.
+
+### Tasks completed
+
+- Added a compact renderer from `DisplayModel` to a 1-bit 800×480 BMP, showing the three model days in chronological order and grouping the sidebar as cancellations, assignments, and homework.
+- Added BMP format validation and persistent content-addressed image storage. The URL hash is the full SHA-256 of the exact BMP bytes; the current pointer is replaced atomically, prior files are retained for 30 days, and invalid or missing revisions are not served.
+- Wired an optional Home Assistant refresh lifecycle into the display service. It refreshes at 30-second intervals, keeps serving the last persisted image when refresh fails, and returns an unavailable response when no image has ever been generated.
+- Added authenticated `/device/v1/status`, `/device/v1/display`, and `/device/v1/image/<hash>.bmp` endpoints. Each requires both firmware-compatible headers, uses a generic 401 response for unknown, revoked, or incorrect credentials, and returns the metadata keys and content-addressed path expected by the firmware.
+- Added a persistent device registry storing one-way SHA-256 credential hashes and the planned lifecycle fields, with atomic mode-restricted writes, cross-process locking, constant-time credential comparison, last-seen updates, and create/list/rotate/revoke local CLI commands. Generated credentials are printed only by the one-time create/rotate commands; list output omits credentials and hashes.
+- Added a configurable host port mapping for the physical display, defaulting to loopback on port 8001. Set `DISPLAY_BIND_ADDRESS` to the display-service host's private LAN address before provisioning a board; this keeps the default host exposure local until the intended LAN interface is known.
+- Declared Pillow as a display-service runtime dependency for rendering.
+
+### How it went
+
+- The API and image format were implemented against the firmware source contract. Invalid credentials are rejected before status, metadata, or image data is returned. Device provisioning and revocation are available through the local registry CLI; the later USB provisioning tool can call this registry path.
+- No tests, service build, live Home Assistant request, or hardware request was run during this task. The rendered BMP byte size and panel display behavior therefore remain unverified at runtime. Milestone 6's complete visual/snapshot acceptance is still open; this renderer is the minimum rendering integration needed to make the Milestone 7 image endpoint useful.
+- With no `HOME_ASSISTANT_URL` and `HOME_ASSISTANT_TOKEN`, the service still starts and `/health` remains available, while `/device/v1/display` returns HTTP 503 until a valid current image exists. A previously persisted current image remains available during HA outages.
+- The Compose port is loopback-bound by default; physical device access requires configuring `DISPLAY_BIND_ADDRESS` to a private LAN address. No public listener or router forwarding was configured.
+
+### Next steps
+
+1. Run the display-service checks and container build, then confirm Pillow emits the exact BMP layout checked by `validate_display_bmp`.
+2. Exercise the API with a locally created device credential, including bad-secret and revoked-device rejection, metadata-to-image download, and restart persistence.
+3. Complete Milestone 6 visual regression coverage and validate the rendered layout against the live Home Assistant entities and physical XIAO ESP32-S3 display.
+4. Have the Milestone 9 USB provisioner use the registry's create/rotate/revoke operations and extend firmware requests with version/applied-hash reporting if those fields should be populated.
+
+## 2026-09-25 — Verify Milestone 7 display service
+
+### Evidence and findings
+
+- The host Python is 3.11.4 while the display service requires Python 3.12+, so service tests ran in a disposable `python:3.12-slim` Docker container against the working tree.
+- The renderer's output was exercised through the real image-store validator; Pillow 12.3.0 produced the exact expected 48,062-byte bitmap layout.
+
+### Tasks completed
+
+- Ran the display-service test suite: `15 passed in 0.44s`.
+- Built the service with `docker compose build display-service`; Docker reported `Image better-lectio-ha-display-display-service Built` and exited 0.
+- Ran an in-process HTTP smoke check using a temporary device registry and image store. Authenticated status and metadata returned 200, the content hash matched the exact BMP bytes, the image route returned those bytes as `image/bmp`, an incorrect secret returned 401, and a revoked device returned 401.
+- Rechecked `git status` and `git diff --check`; no test-generated files were added to the workspace and no whitespace errors were reported. Docker/Pip emitted routine line-ending and root-install/update notices only.
+
+### How it went
+
+- The requested service tests and container build passed. The smoke check covers the new API and BMP compatibility path that the pre-existing 15-test suite did not cover.
+- No live Home Assistant request or physical e-paper display was available in this check. The full Milestone 6 visual regression acceptance and hardware rendering remain outstanding.
+
+### Next steps
+
+1. Exercise rendering with representative live HA data and complete the planned visual regression cases.
+2. Configure `DISPLAY_BIND_ADDRESS` to the server's private LAN address before provisioning the physical display.
+
+## 2026-09-25 — Renderer implementation plan for review
+
+### Evidence and findings
+
+- The user approved the Milestone 6 renderer design above and approved this task breakdown before implementation began.
+- The shared checkout now contains an uncommitted Milestone 7 draft, including `renderer.py`, `image_store.py`, device routes, and provisioning code. I inspected it read-only and will preserve these changes. The current renderer returns raw bytes from `render_display_model`, uses Pillow's default font, differs from the approved layout coordinates, and has no renderer-specific tests or visual snapshots. `DisplayImageStore` currently computes the content hash downstream.
+- The latest recorded Milestone 7 verification reports 15 display-service tests passing and a successful service image build, but also explicitly leaves the Milestone 6 visual/snapshot acceptance open. Those results do not verify the approved renderer behavior.
+
+### Proposed test-first task breakdown
+
+1. **Lock the renderer artifact contract.** Add focused tests first for `render_display(model)`, returning an immutable artifact with BMP bytes, the full SHA-256 digest, and `<digest>.bmp` filename. Verify deterministic output for identical input, BMP format, 800×480 dimensions, mode `1`, and a changed hash when visible content changes. Run these tests against the current draft to establish the failing baseline, then implement the contract and adapt the minimal M7 call site to pass the artifact's BMP bytes to image storage.
+2. **Match the approved canvas and typography.** Add pixel/layout assertions for 800×480, 20 px outer margins, a 626 px schedule region, 14 px gutter, and a 120 px sidebar. Load DejaVu Sans from the configured/system font path; add the font package to the display image. Keep the renderer pure and independent from Home Assistant, filesystem, and API concerns.
+3. **Render the merged three-day schedule.** Cover chronological events from both sources, all-day and timed events, optional teacher/room labels, missing days, long titles, and dense days. Keep times readable, shorten teacher/room text before title truncation, retain date headings, and show a visible per-day `+N more` count whenever rows overflow.
+4. **Render the prioritized sidebar.** Cover cancellation, assignment, and homework group order; model priority order within each group; homework subtitle/date fallback; long labels; and a full sidebar. Drop lowest-priority items first and show the omitted-item count without allowing content to overlap the schedule or footer.
+5. **Add the approved visual regression set and integrate.** Save snapshots for normal and dense days, no events, long labels, mixed Lectio/private events, cancellation-heavy and assignment-heavy sidebars, and homework fallback. Compare rendered pixels against these fixtures and retain artifact/hash assertions. Run the display-service suite, lint, Compose validation, and display-service container build; inspect the final diff to ensure the unrelated M7 work is preserved and no secrets are included.
+
+### Plan self-review
+
+- This breakdown follows the approved pure-renderer boundary, fixed 1-bit BMP output, dimensions, relative schedule/sidebar sizing, ordering, overflow rules, artifact identity, font choice, and eight snapshot scenarios.
+- It accounts for the renderer and API integration already present in the shared checkout while limiting renderer edits to the agreed contract and the smallest required call-site adaptation. It does not authorize rewriting or discarding the device registry, image store, API, Compose port, or other M7 draft files.
+- The plan distinguishes the recorded M7 service checks from unrun renderer snapshot acceptance. No live Home Assistant or physical display validation will be claimed unless directly run.
+- Ruling: Keep the execution ledger in this canonical plan instead of creating the extra `.superpowers/sdd/.../progress.md` and task brief files assumed by the plan-execution helper scripts — `AGENTS.md` allows only `IMPLEMENTATION_PLAN.md` for progress and planning notes — cost if wrong: no generated task briefs, so each task follows this logged breakdown directly.
+- Ruling: Give the fresh reviewer the committed base-to-HEAD diff directly instead of generating the helper's separate Markdown review package — `AGENTS.md` restricts progress/review notes to `IMPLEMENTATION_PLAN.md` — cost if wrong: the reviewer lacks helper-generated packaging, while still receiving the full diff, plan, and review focus.
+
+### Next steps
+
+1. Complete a fresh whole-change code review and address any Critical or Important finding with a failing test first.
+2. Commit the verified work and push `main` to `origin`, as previously requested by the user.
+3. Retain the limitation that no live Home Assistant instance or physical display was available for end-to-end validation.
+
+### Execution progress
+
+- **Task 1 complete — artifact contract.** Added `RenderedDisplay` and `render_display(model)` with BMP bytes, full SHA-256, and `<hash>.bmp`, retaining `render_display_model(model) -> bytes` for the existing device API draft. The new tests first failed because `render_display` was absent (2 failed), then passed (2 passed). The display-service suite passed (17 passed).
+- **Task 2 complete — canvas and font.** Added the approved 20 px margins, 626 px schedule region, 14 px gutter, and 120 px sidebar, plus DejaVu Sans loading and the `fonts-dejavu-core` runtime package in the service image. The new pixel-boundary test first failed at the approved x=646 divider (1 failed), then passed with the focused renderer tests (3 passed). Full display-service suite passed (18 passed). The disposable Python 3.12 test container was provisioned with DejaVu Sans so its raster output matches the service image.
+- **Task 3 ruling.** For multiword teacher and room labels, abbreviate each alphabetic word before the final word to its initial plus period, preserving existing initials and single-token labels. This turns “Alexander Montgomery” into “A. Montgomery” and “Auditorium North Wing” into “A. N. Wing”; cost if wrong: full first/middle words are less identifiable, while the surname or final location word remains visible.
+- **Task 3 complete — merged schedule and overflow.** Added coverage for dense days, preserved times, overflow counts, long subjects with teacher/room details, all-day and timed events, optional missing details, and abbreviated multiword labels. The abbreviation test first failed against the original renderer (1 failed, 5 passed); after the abbreviation change, focused tests passed (6 passed), and the added all-day/optional-details characterization also passed. Full display-service suite passed (22 passed).
+- **Task 4 complete — sidebar priority and overflow.** Added reserved footer space for a visible `+N more` count, kept category and model order, and stopped rendering lower-priority items when the sidebar fills. Tests first failed because 12- and 13-item sidebars rendered identically without an omission count (1 failed, 9 passed), then focused tests passed (10 passed). Tests also confirm lower-priority homework is omitted before cancellations/assignments and that homework falls back to its due date. Full display-service suite passed (25 passed).
+- **Task 5 ruling.** The repository-wide run found two stale scaffold assertions requiring the display service to have no host port and requiring every published port to be fixed loopback. The current authorized Milestone 7 Compose draft adds a device endpoint with a configurable bind address defaulting to `127.0.0.1`; keep that design and update the scaffold tests to assert the exact defaulted display binding while keeping gateway and browser-auth bindings loopback. Cost if wrong: the test contract could accept an unintended display exposure, so also validate Compose resolution with the default and a private-address override.
+- **Task 5 progress — snapshots and integration checks.** Added eight named 1-bit PNG snapshots and a pixel comparison test covering normal, dense, no-events, long-label, mixed-calendar, cancellation-heavy, assignment-heavy, and homework-fallback cases. Visual inspection found the first snapshot fixture assigned tomorrow's and day+2 events to today's date; corrected the fixture dates and refreshed normal/dense snapshots. Expanded the cancellation-heavy fixture to exercise the omitted-count footer. Snapshot tests pass (8 passed). Updated the two stale Compose scaffold assertions; focused scaffold tests pass (2 passed). Full-repository verification and service image build remain.
+
+### Execution outcome
+
+- Final repository suite: `112 passed in 4.89s` using Python 3.12 in the shared test container.
+- Ruff passed across the Python services, Home Assistant integration, and root scaffold tests. `docker compose config --quiet` passed; resolved bindings were verified as `127.0.0.1:8001` by default and `192.0.2.8:8002` with an explicit private-address override. The display-service image built successfully with DejaVu Sans installed.
+- The built service image rendered a BMP accepted by `validate_display_bmp` at 48,062 bytes. An in-process device API smoke check verified status, metadata, image bytes, invalid-secret rejection, and revoked-device rejection.
+- `git diff --check` passed. No live Home Assistant API or physical e-paper display was available; those integration paths remain unverified.
+- The initial full suite had two failures from scaffold tests that still asserted the display service could not publish a host port. After updating those tests to the approved loopback-default device binding, the final full suite passed.
+
+## 2026-09-25 — Weighted implementation-plan progress assessment
+
+### Evidence and findings
+
+- Read every repository Markdown file recursively before assessing progress, including the full current implementation roadmap and execution log.
+- The checkout is at `a71fff5` with uncommitted display-service changes. The working tree contains the Milestone 7 device API, image store, and device registry draft, plus Milestone 6 renderer work. The latest renderer log marks the artifact contract and approved canvas/font as complete; schedule overflow behavior, sidebar omission handling, and visual snapshots remain open.
+- The latest Milestone 7 execution entries record the display-service suite passing (15 tests), a successful container build, a 48,062-byte firmware-compatible BMP, and an HTTP smoke check covering authenticated metadata/image retrieval, bad credentials, and revoked devices. These are recorded checks from the prior implementation turn; no tests or runtime checks were run for this assessment.
+- Milestones 0–3, 5, and 7 are treated as implemented in the current checkout. Milestone 4 remains partly unverified because no live Home Assistant setup/entity check has been recorded. Milestone 6 is in progress. There is no firmware implementation or USB provisioner in the current tree, and Tailnet operations and Phase-2/Phase-3 authentication work remain open.
+- Retained the earlier judgment-based milestone weights, which sum to 100%: M0 8%, M1 12%, M2 15%, M3 8%, M4 10%, M5 5%, M6 7%, M7 5%, M8 9%, M9 5%, M10 4%, M11 3%, M12 2%, M13 4%, M14 3%.
+- Assigned completion by milestone: M0 100%, M1 100%, M2 100%, M3 100%, M4 85%, M5 100%, M6 45%, M7 100%, M8 0%, M9 0%, M10 0%, M11 0%, M12 0%, M13 35%, M14 65%.
+- Weighted calculation: `8 + 12 + 15 + 8 + 8.5 + 5 + 3.15 + 5 + 0 + 0 + 0 + 0 + 0 + 1.4 + 1.95 = 68.0%`.
+
+### Tasks completed
+
+- Compared the roadmap and recent execution evidence with the current source tree, renderer tests, display-service API draft, Compose configuration, and CI jobs.
+- Revised the effort-weighted estimate to **about 68% complete**, leaving **about 32%** of the modeled effort. A reasonable uncertainty band is approximately **64–72%** because the plan has no measured effort estimates and the renderer/hardening completion fractions are judgment calls.
+
+### How it went
+
+- This was a read-only progress assessment plus this required execution-log update. No application code changed and no tests or runtime checks were run during this assessment.
+- The estimate counts work present in the shared checkout even where the display API/renderer changes remain uncommitted. It is an implementation-progress estimate, not a merged-release or schedule forecast.
+- Milestones 0–14 are not equal in effort. The remaining work is concentrated in custom firmware (M8, 9 weight points), USB provisioning (M9, 5 points), Tailnet operations (M10, 4 points), the uncompleted renderer acceptance (M6), and incomplete operational hardening/CI (M13–M14). Phase 3 login is conditional on the Phase-2 flow analysis and may not be feasible or necessary.
+
+### Next steps
+
+1. Finish Milestone 6's remaining schedule/overflow and sidebar behavior, add the planned visual regression cases, and run its recorded verification suite.
+2. Validate the Home Assistant integration and entity behavior against a live HA instance to close the remaining Milestone 4 acceptance gap.
+3. Implement and verify the custom firmware, then build the USB provisioning tool against the device API and real board protocol.
+4. Complete Tailnet operations, remaining operational hardening and CI coverage, and then perform the Phase-2 auth-flow analysis before deciding whether Phase 3 is feasible.
+
+## 2026-09-25 — Resolve renderer review and verify the implementation
+
+### Evidence and findings
+
+- A fresh review of the staged Milestone 7 and Milestone 6 changes found no Critical issues and one Important issue: after restart, `DisplayModelService` has no in-memory calendar cache, so a valid assignment or cancellation response could permit publishing a partial model that erased the persisted schedule image. The reviewer reproduced this behavior.
+- `ARCHITECTURE_AND_OPERATIONS.md` requires temporary source failures to retain last-known-good information. The existing model service already reports each calendar as `valid`, `stale`, `expired`, `error`, or `unknown`; persisted image state survives process restarts.
+- The review also noted that the vertical divider stopped at y=462, leaving 17 blank rows below it instead of the approved 20 px bottom margin. It recommended durable tests around the Milestone 7 device endpoints and noted future diagnostics and edge-case test opportunities.
+
+### Tasks completed
+
+- Added a restart/partial-failure regression test that begins with a persisted schedule image, simulates one unavailable calendar, then both calendars unavailable while assignments remain usable, and finally calendar recovery. Against the original refresh rule the regression failed because the first partial response replaced the prior image; with the fix it retains the prior image until all reported calendar sources are usable, then publishes the recovered render. Calendar states `valid`, `stale`, and `expired` count as usable.
+- Added calendar-source protection to `DisplayBackend.refresh_if_due`: at least one calendar must be usable before the first image is generated; after an image exists, the renderer waits until every reported calendar source is usable before replacing it. This preserves the saved image across startup failures without removing the existing per-source stale-cache behavior during a running session.
+- Moved the renderer's bottom boundary to y=459 and added pixel assertions for the approved 20 px blank lower margin. Regenerated the eight visual snapshots to match the approved geometry.
+- Added a persistent API regression covering authenticated status/metadata/image retrieval after backend restart, incorrect credential rejection, and revoked credential rejection.
+- Retained the prior M7 Compose port design, defaulting the device endpoint to loopback on port 8001, and kept the scaffold tests aligned with that binding.
+
+### How it went
+
+- The review's Important issue is resolved. The renderer margin discrepancy is resolved. The API smoke coverage is now durable. Source-freshness diagnostics beyond the existing device response and additional empty-day/overnight event cases were not part of this approved renderer acceptance; track these for operational-hardening follow-up.
+- Final default project suite: `114 passed in 5.23s` across root, gateway, auth-browser, auth-lifecycle, and display-service tests. The separately run Home Assistant suite passed (`23 passed` under Python 3.14; five upstream deprecation warnings). Ruff passed across Python services, Home Assistant, and root scaffold tests. `docker compose config --quiet` passed, and `docker compose --profile auth-browser build` built all four service images successfully.
+- `git diff HEAD --check` passed. No live Home Assistant request or physical e-paper display was available, so those end-to-end paths remain unverified. The Python 3.12 container lacks the optional Home Assistant package; the Home Assistant suite was run separately in the existing Python 3.14 environment.
+- This execution closes the local Milestone 6 renderer acceptance and adds regression coverage for the Milestone 7 image/device path. The prior 68% weighted estimate predates this work and is superseded for Milestone 6; no new project-wide weighted estimate was calculated.
+
+### Next steps
+
+1. Inspect and commit the reviewed implementation on `main`, then push to `origin/main` as previously requested.
+2. Verify the remote branch and local working tree after the push.
+3. Continue with live Home Assistant and physical display verification when those environments are available, and add a human-facing freshness diagnostics surface during operational hardening.
