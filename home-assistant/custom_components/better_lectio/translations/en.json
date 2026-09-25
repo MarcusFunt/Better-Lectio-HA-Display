@@ -1,0 +1,56 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to Better Lectio Gateway",
+        "description": "Enter the base URL of your local Better Lectio Gateway.",
+        "data": {
+          "url": "Gateway URL"
+        }
+      }
+    },
+    "error": {
+      "invalid_url": "Enter a valid HTTP or HTTPS gateway URL.",
+      "cannot_connect": "Could not connect to a compatible Better Lectio Gateway."
+    },
+    "abort": {
+      "already_configured": "This gateway is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Refresh behavior",
+        "data": {
+          "refresh_interval": "Refresh interval (seconds)"
+        }
+      }
+    }
+  },
+  "entity": {
+    "calendar": {
+      "schedule": {
+        "name": "Lectio"
+      }
+    },
+    "todo": {
+      "assignments": {
+        "name": "Lectio assignments"
+      },
+      "homework": {
+        "name": "Lectio homework"
+      }
+    },
+    "sensor": {
+      "cancellations": {
+        "name": "Lectio cancellations"
+      },
+      "session_status": {
+        "name": "Lectio session status"
+      },
+      "last_sync": {
+        "name": "Lectio last sync"
+      }
+    }
+  }
+}

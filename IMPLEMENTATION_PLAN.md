@@ -2035,3 +2035,32 @@ This section is the canonical running record for agent evidence, completed work,
 
 1. Start Milestone 4 by implementing the Home Assistant integration that consumes the gateway's normalized API and sync status.
 2. Keep device display rendering, device API/firmware, provisioning, and Tailnet work in their planned later milestones.
+
+## 2026-09-25 — Implement Milestone 4 Home Assistant integration
+
+### Evidence and findings
+
+- The gateway exposes `/api/v1/status` and normalized schedule, assignments, homework, and cancellation endpoints. Status reveals only student-ID availability, not the identifier. The integration consumes this API over the local gateway URL and stores no Lectio credentials or student ID.
+- Home Assistant 2026.9.3 requires Python 3.14.2 or newer; its integration tests ran under Python 3.14.7. The repository's existing services remain on their Python 3.12 test environment.
+- The architecture keeps the private calendar HA-managed. This integration adds the Lectio calendar only; users can create their separate private calendar through HA's normal UI.
+
+### Tasks completed
+
+- Added the `better_lectio` custom integration with a URL-verifying config flow, refresh-interval options, shared-session gateway client, and per-source polling coordinator with sanitized error handling and last-good data.
+- Added a date-range calendar, read-only assignment and homework to-do lists, cancellation count, auth/session state and last-sync sensors. Student IDs and raw upstream error text are not exposed.
+- Added explicit allowlist-based redacted diagnostics and English config-flow translations.
+- Added coordinator, API, config-flow, entity, manifest, normalization, and diagnostics-redaction tests, plus a Python 3.14/Home Assistant 2026.9.3 CI job and a dedicated `test-home-assistant` Make target.
+- Fixed review findings for gateway availability propagation, options-flow compatibility, exact calendar-range errors, stale range refresh, and malformed sync/auth state values.
+
+### How it went
+
+- Home Assistant tests: `23 passed` with five deprecation warnings originating in Home Assistant/backoff dependencies. Ruff passed for the integration and tests.
+- Existing repository tests: `80 passed`; repository Ruff checks passed. `docker compose config --quiet`, `docker compose --profile auth-browser build`, and `git diff --check` passed.
+- The HA tests use mocked HTTP and real HA modules; they do not represent a live Home Assistant setup or a real gateway-to-HA session. No HA instance was available for UI setup or live entity validation.
+- A broad initial pytest invocation collected the HA suite in the Python 3.12 service container and failed collection because Home Assistant is intentionally installed only in the dedicated Python 3.14 environment. The documented service test target then passed in its intended environment.
+
+### Next steps
+
+1. Install the custom component in the user's Home Assistant instance, configure the gateway URL, and verify calendar, to-do, sensor, and diagnostics behavior against the running gateway.
+2. Keep the private calendar HA-managed and separate from the Lectio calendar.
+3. Continue with the next planned display-model and rendering milestone after live HA validation.

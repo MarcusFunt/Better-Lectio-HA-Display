@@ -1,0 +1,29 @@
+"""Constants for the Better Lectio integration."""
+
+from homeassistant.const import Platform
+
+DOMAIN = "better_lectio"
+INTEGRATION_VERSION = "0.1.0"
+
+CONF_URL = "url"
+CONF_REFRESH_INTERVAL = "refresh_interval"
+
+DEFAULT_REFRESH_INTERVAL = 300
+MIN_REFRESH_INTERVAL = 60
+MAX_REFRESH_INTERVAL = 3600
+REQUEST_TIMEOUT_SECONDS = 15
+DEFAULT_RANGE_DAYS_BEFORE = 1
+DEFAULT_RANGE_DAYS_AFTER = 31
+
+SOURCE_SCHEDULE = "schedule"
+SOURCE_ASSIGNMENTS = "assignments"
+SOURCE_HOMEWORK = "homework"
+SOURCE_CANCELLATIONS = "cancellations"
+SOURCES = (
+    SOURCE_SCHEDULE,
+    SOURCE_ASSIGNMENTS,
+    SOURCE_HOMEWORK,
+    SOURCE_CANCELLATIONS,
+)
+
+PLATFORMS = (Platform.CALENDAR, Platform.TODO, Platform.SENSOR)
