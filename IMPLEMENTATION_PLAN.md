@@ -2375,3 +2375,25 @@ This section is the canonical running record for agent evidence, completed work,
 
 1. Consider durable per-source display-model persistence during operational hardening; continue with live Home Assistant and physical display validation when available.
 2. Implement and validate the custom firmware and USB provisioning path, then complete Tailnet operations and remaining hardening.
+
+## 2026-09-25 — Fix renderer snapshot CI environment
+
+### Evidence and findings
+
+- Inspected the latest GitHub Actions run for `main`, run `36190870337` on commit `890fc4e`. The `home-assistant-integration` job passed. The `checks` job failed during `make test`: all eight renderer snapshot cases differed from the committed fixtures, while the other 109 tests passed.
+- The snapshot renderer loads `/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf` directly. The display-service Dockerfile installs `fonts-dejavu-core`, but the GitHub `checks` workflow installed only Python packages and did not declare or verify the renderer font dependency. This left pixel snapshots dependent on the hosted runner's ambient font installation.
+
+### Tasks completed
+
+- Updated `.github/workflows/ci.yml` to install `fonts-dejavu-core` in the Python 3.12 checks job and verify the exact font path exists before running tests. This aligns test setup with the runtime image's declared font dependency.
+- Observed the red CI result in run `36190870337`; after the workflow change, the current font-equipped local Python 3.12 environment passed the full project suite (`117 passed in 3.91s`). Ruff passed, and `docker compose config --quiet` passed.
+
+### How it went
+
+- The Home Assistant CI job was already passing; no HA code or workflow change was needed. The fix is limited to the missing renderer system dependency in the checks job.
+- A new GitHub Actions run is required to confirm the Ubuntu hosted runner now produces the committed pixel snapshots with the explicitly installed font.
+
+### Next steps
+
+1. Commit and push the CI font setup change to `main`.
+2. Confirm the resulting GitHub Actions run passes both jobs; record the run URL and result.
