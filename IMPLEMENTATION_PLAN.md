@@ -1396,3 +1396,44 @@ This section is the canonical running record for agent evidence, completed work,
 3. Build the Docker Compose/service skeleton without preserving Pi/systemd assumptions merely for compatibility.
 4. Continue updating this execution log on every task with concrete evidence, completed work, outcome, and next actions.
 
+## 2026-09-25 — Rewrite stale project documentation
+
+### Evidence and findings
+
+- The repository contains four Markdown files on this branch: `AGENTS.md`, `ARCHITECTURE_AND_OPERATIONS.md`, `IMPLEMENTATION_PLAN.md`, and `README.md`.
+- All four Markdown files were read recursively before editing, in accordance with `AGENTS.md`.
+- `AGENTS.md`, `ARCHITECTURE_AND_OPERATIONS.md`, and the implementation roadmap already match the updated design.
+- `README.md` was the only stale project document. It still presented the retired prototype as the active architecture: Raspberry Pi Zero deployment, systemd services, stock TRMNL/Seeed firmware, direct Lectio login from the old server, raw ICS calendar input, and TRMNL BYOS endpoints.
+- The runtime repository is still in migration: existing `trmnl_schedule/`, `systemd/`, legacy environment configuration, and related tests are old implementation artifacts. Documentation must describe that fact rather than claiming the replacement stack already exists.
+
+### Tasks completed
+
+- Rewrote `README.md` to describe the current layered architecture:
+  - dedicated Lectio Gateway;
+  - phased Playwright → inspected flow → streamlined-login authentication strategy;
+  - `python-lectio` lineage behind an adapter;
+  - Home Assistant as the mandatory middle layer;
+  - HA calendar/todo/sensor entity model;
+  - chronological today/tomorrow/day+2 display with cancellations > assignments > homework sidebar priority;
+  - Docker Compose deployment;
+  - custom always-powered LAN-only firmware;
+  - USB-only runtime provisioning with per-device credentials;
+  - Tailscale for remote human/admin access.
+- Removed obsolete README instructions for Raspberry Pi Zero, systemd installation, raw ICS configuration, stock TRMNL setup, battery-oriented polling, and old BYOS endpoints.
+- Added an explicit migration-status section so readers can distinguish the target architecture from the legacy runtime code that remains in the repository.
+- Added links from the README to `AGENTS.md`, `ARCHITECTURE_AND_OPERATIONS.md`, and this implementation plan.
+
+### How it went
+
+- Documentation now presents one consistent architecture. No architectural decisions were changed.
+- This was a documentation-only task. No runtime code, Compose file, Home Assistant integration, firmware, provisioning tool, or external service was modified or tested.
+- The README intentionally labels target commands such as `make firmware` and `make provision` as planned workflows rather than claiming they are already implemented.
+- The previous execution-log note that the README was a known stale inconsistency is superseded by this entry; it remains useful history explaining why the rewrite was necessary.
+
+### Next steps
+
+1. Keep this PR focused on the documentation/governance baseline and review the rewritten README together with the architecture and implementation plan.
+2. After merge, begin Milestone 0 by creating the Docker Compose/service/package scaffolding and retiring the old Pi/systemd runtime assumptions in code/configuration.
+3. Preserve the explicit distinction between target architecture and verified implementation state until each milestone is actually completed.
+4. Continue recording all implementation evidence, outcomes, and next actions in this execution log.
+
