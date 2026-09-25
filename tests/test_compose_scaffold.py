@@ -13,12 +13,14 @@ def test_compose_builds_gateway_and_display_as_separate_services():
         "lectio-auth-browser",
         "lectio-auth-lifecycle",
         "display-service",
+        "display-diagnostics",
     }
     for name, path in {
         "lectio-gateway": "services/lectio-gateway",
         "lectio-auth-browser": "services/lectio-auth-browser",
         "lectio-auth-lifecycle": "services/lectio-auth-lifecycle",
         "display-service": "services/display-service",
+        "display-diagnostics": "services/display-service",
     }.items():
         service = compose["services"][name]
         assert service["build"]["context"] == f"./{path}"
@@ -42,6 +44,9 @@ def test_compose_builds_gateway_and_display_as_separate_services():
     assert compose["services"]["lectio-gateway"]["environment"][
         "LECTIO_AUTH_BROWSER_URL"
     ] == "http://${COMPOSE_PROJECT_NAME:-better-lectio-ha-display}-lectio-auth-browser:8765"
+    assert compose["services"]["lectio-gateway"]["environment"][
+        "DISPLAY_DIAGNOSTICS_URL"
+    ] == "http://display-diagnostics:8001"
     assert compose["services"]["lectio-auth-lifecycle"]["environment"][
         "LECTIO_AUTH_BROWSER_CONTAINER"
     ] == "${COMPOSE_PROJECT_NAME:-better-lectio-ha-display}-lectio-auth-browser"
@@ -52,13 +57,21 @@ def test_compose_builds_gateway_and_display_as_separate_services():
         "lectio-gateway"
     ].get("volumes", [])
     assert "lectio-auth-runtime" in compose["services"]["lectio-gateway"]["networks"]
-    assert "depends_on" not in compose["services"]["lectio-gateway"] or set(
-        compose["services"]["lectio-gateway"]["depends_on"]
-    ) == {"lectio-auth-lifecycle"}
+    assert set(compose["services"]["lectio-gateway"]["depends_on"]) == {
+        "lectio-auth-lifecycle",
+        "display-diagnostics",
+    }
     assert compose["services"]["display-service"]["ports"] == [
         "${DISPLAY_BIND_ADDRESS:-127.0.0.1}:${DISPLAY_HOST_PORT:-8001}:8000"
     ]
     assert "lectio-auth-control" in compose["services"]["lectio-gateway"]["networks"]
+    diagnostics = compose["services"]["display-diagnostics"]
+    assert diagnostics["networks"] == ["default"]
+    assert diagnostics["expose"] == ["8001"]
+    assert "ports" not in diagnostics
+    assert diagnostics["volumes"] == [
+        "display-service-data:/var/lib/better-lectio-display:ro"
+    ]
 
 
 def test_auth_endpoints_stay_on_loopback_and_display_port_is_configurable():

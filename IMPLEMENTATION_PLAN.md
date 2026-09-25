@@ -2400,3 +2400,32 @@ This section is the canonical running record for agent evidence, completed work,
 ### Next steps
 
 1. No further repair steps remain for this CI failure; investigate any later failures from their specific run logs.
+
+## 2026-09-26 — Add login-page diagnostics and newest bitmap preview
+
+### Evidence and findings
+
+- Read all repository Markdown files recursively before implementation, then inspected the auth page, gateway source-status API, display image store, Compose networking, and relevant tests.
+- The starting checkout was `main` at `7ebf127`; the default Compose services were running. The display service did not have a Home Assistant URL or token configured, and its current-image store had no rendered bitmap.
+- While this task was in progress, `origin/main` advanced through the CI-fix and runtime-status commits to `4c313d2`. A fresh fetch confirmed local `main` now matches `origin/main`; the diagnostics changes remained in the working tree.
+- The user approved a bounded design that keeps bitmap access on a Compose-only internal diagnostics service and proxies the preview through the existing loopback-only gateway.
+
+### Tasks completed
+
+- Extended `/auth/diagnostics` with authentication state, student-ID availability, each Lectio source's freshness state and timestamps, and the latest display revision metadata. It omits student IDs, cookies, source error details, and Lectio item contents.
+- Added a read-only diagnostics service that shares the display data volume read-only, refreshes the current image pointer, and serves validated BMPs only on an unpublished Compose port. Added same-origin gateway metadata and image routes.
+- Updated `/auth/browser` with source freshness rows and a timestamp/hash-labelled 800×480 bitmap preview that refreshes when its content hash changes. It reports clearly when no bitmap exists.
+- Added redaction, unavailable-image, read-only storage, current-revision refresh, preview-route, page, and Compose-boundary tests.
+- The added tests first failed on the missing diagnostic app/routes/UI/Compose service. In the supported Python 3.12 environment, the focused changed-scope suite passed (`16 passed`). The final repository Python suite passed (`123 passed in 4.16s`) and selected Ruff checks passed.
+
+### How it went
+
+- `docker compose config --quiet` and `git diff --check` passed. The gateway and display images built, then the default Compose services were force-recreated and reported healthy.
+- A live request to `/auth/browser` returned HTTP 200 and included both diagnostics sections. `/auth/diagnostics` reported `AUTHENTICATED` and all four Lectio sources as valid. The new diagnostics container has no host port mapping.
+- The live preview is currently unavailable because the running display service has no Home Assistant URL/token and has not rendered a bitmap. The sidecar tests served a real validated BMP from a temporary image store; the gateway proxy test used a fake diagnostics client. No live Home Assistant or physical display check was performed.
+- The image preview path is implemented and degrades to a clear no-bitmap state. Actual display rendering remains dependent on configuring Home Assistant.
+
+### Next steps
+
+1. Commit and push the task to `origin/main`, then rebuild and restart the default Compose checkout from the pushed revision and confirm runtime health.
+2. After Home Assistant is configured and has produced an image, open the local login page and verify the live bitmap preview.

@@ -24,19 +24,29 @@ class DisplayRevision:
 class DisplayImageStore:
     """Save immutable BMPs and atomically point to the current revision."""
 
-    def __init__(self, data_dir: Path) -> None:
+    def __init__(self, data_dir: Path, *, read_only: bool = False) -> None:
         self._data_dir = data_dir
         self._images_dir = data_dir / "images"
-        self._images_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        self._read_only = read_only
+        if not read_only:
+            self._images_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         self._current_path = data_dir / "current.json"
-        self._current = self._load_current()
+        self._current: DisplayRevision | None = None
+        self.refresh_current()
 
     @property
     def current(self) -> DisplayRevision | None:
         return self._current
 
+    def refresh_current(self) -> DisplayRevision | None:
+        """Reload the current pointer, including changes from another process."""
+        self._current = self._load_current()
+        return self._current
+
     def publish(self, bmp: bytes, generated_at: datetime) -> DisplayRevision:
         """Validate and atomically publish one exact firmware-compatible BMP."""
+        if self._read_only:
+            raise PermissionError("This image store is read-only")
         validate_display_bmp(bmp)
         if generated_at.tzinfo is None or generated_at.utcoffset() is None:
             raise ValueError("generated_at must be timezone-aware")

@@ -6,8 +6,9 @@ from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlparse
 
+import httpx
 from fastapi import FastAPI, HTTPException, Request, status
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
 from lectio_gateway.auth.manager import (
     AuthFlowInProgress,
@@ -31,6 +32,70 @@ from lectio_gateway.lectio.models import (
     LectioLesson,
     LectioSourceResponse,
 )
+
+_DISPLAY_CONTENT_HASH = re.compile(r"^[a-f0-9]{64}$")
+
+
+class DisplayDiagnosticsClient:
+    """Read the latest display artifact through the private Compose API."""
+
+    def __init__(self, base_url: str) -> None:
+        self._base_url = base_url.rstrip("/")
+
+    async def current(self) -> dict[str, object]:
+        try:
+            async with httpx.AsyncClient(timeout=2.0) as client:
+                response = await client.get(f"{self._base_url}/diagnostics/current")
+            response.raise_for_status()
+            payload = response.json()
+        except (httpx.HTTPError, ValueError):
+            return {"available": False, "state": "unavailable"}
+
+        if not isinstance(payload, dict):
+            return {"available": False, "state": "unavailable"}
+        if payload.get("available") is False and payload.get("state") == "not_rendered":
+            return {"available": False, "state": "not_rendered"}
+        content_hash = payload.get("content_hash")
+        generated_at = payload.get("generated_at")
+        if (
+            payload.get("available") is not True
+            or not isinstance(content_hash, str)
+            or _DISPLAY_CONTENT_HASH.fullmatch(content_hash) is None
+            or not isinstance(generated_at, str)
+        ):
+            return {"available": False, "state": "unavailable"}
+        try:
+            datetime.fromisoformat(generated_at)
+        except ValueError:
+            return {"available": False, "state": "unavailable"}
+        return {
+            "available": True,
+            "content_hash": content_hash,
+            "generated_at": generated_at,
+        }
+
+    async def image(self, content_hash: str) -> bytes | None:
+        try:
+            async with httpx.AsyncClient(timeout=3.0) as client:
+                response = await client.get(
+                    f"{self._base_url}/diagnostics/image/{content_hash}.bmp"
+                )
+        except httpx.HTTPError:
+            return None
+        if response.status_code != 200 or response.headers.get(
+            "content-type", ""
+        ).split(";", 1)[0].casefold() != "image/bmp":
+            return None
+        return response.content
+
+
+def _display_diagnostics_client(request: Request) -> DisplayDiagnosticsClient:
+    configured = getattr(request.app.state, "display_diagnostics_client", None)
+    if configured is not None:
+        return configured
+    return DisplayDiagnosticsClient(
+        os.getenv("DISPLAY_DIAGNOSTICS_URL", "http://display-diagnostics:8001")
+    )
 
 
 @asynccontextmanager
@@ -107,13 +172,61 @@ async def auth_status(request: Request) -> dict[str, object]:
 
 
 @app.get("/auth/diagnostics", include_in_schema=False)
-async def auth_diagnostics(request: Request) -> dict[str, bool]:
-    session = _manager(request).session
-    return {
-        "student_id_available": (
-            session is not None and session.student_id is not None
+async def auth_diagnostics(request: Request) -> dict[str, object]:
+    manager = _manager(request)
+    current = manager.status()
+    session = manager.session
+    sources = {
+        source: sync.model_dump(
+            mode="json",
+            include={
+                "state",
+                "is_stale",
+                "last_attempt_at",
+                "last_successful_sync",
+            },
         )
+        for source, sync in _data_service(request).statuses().items()
     }
+    display = await _display_diagnostics_client(request).current()
+    if display.get("available") is True:
+        content_hash = display["content_hash"]
+        display = {
+            "available": True,
+            "content_hash": content_hash,
+            "generated_at": display["generated_at"],
+            "image_url": f"/auth/diagnostics/bitmap/{content_hash}.bmp",
+        }
+    elif display.get("state") == "not_rendered":
+        display = {"available": False, "state": "not_rendered"}
+    else:
+        display = {"available": False, "state": "unavailable"}
+    return {
+        "auth": {
+            "state": current.state.value,
+            "student_id_available": session is not None
+            and session.student_id is not None,
+        },
+        "sources": sources,
+        "display": display,
+    }
+
+
+@app.get("/auth/diagnostics/bitmap/{content_hash}.bmp", include_in_schema=False)
+async def auth_diagnostics_bitmap(content_hash: str, request: Request) -> Response:
+    if _DISPLAY_CONTENT_HASH.fullmatch(content_hash) is None:
+        raise HTTPException(status_code=404, detail="Display image not found")
+    bmp = await _display_diagnostics_client(request).image(content_hash)
+    if bmp is None:
+        raise HTTPException(status_code=404, detail="Display image not found")
+    return Response(
+        content=bmp,
+        media_type="image/bmp",
+        headers={
+            "Cache-Control": "no-store",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 @app.get("/api/v1/status")
@@ -285,6 +398,13 @@ async def auth_browser(request: Request) -> HTMLResponse:
     button {{ margin: 0 .4rem .5rem 0; padding: .65rem 1rem; }}
     iframe {{ border: 1px solid #777; width: 100%; height: min(70vh, 800px); }}
     pre {{ background: #f1f1f1; padding: 1rem; white-space: pre-wrap; }}
+    .diagnostics {{ margin: 1.5rem 0; padding: 1rem; border: 1px solid #bbb; border-radius: .5rem; }}
+    .diagnostics-grid {{ display: grid; grid-template-columns: minmax(16rem, 1fr) minmax(20rem, 1.4fr); gap: 1.5rem; }}
+    table {{ border-collapse: collapse; width: 100%; }}
+    th, td {{ border-bottom: 1px solid #ddd; padding: .45rem; text-align: left; vertical-align: top; }}
+    #display-preview {{ border: 1px solid #777; display: block; height: auto; image-rendering: pixelated; max-width: 100%; }}
+    #display-hash {{ overflow-wrap: anywhere; }}
+    @media (max-width: 720px) {{ .diagnostics-grid {{ grid-template-columns: 1fr; }} }}
   </style>
 </head>
 <body>
@@ -301,6 +421,25 @@ async def auth_browser(request: Request) -> HTMLResponse:
   </form>
   <p>Enter your own ID. Lectio checks schedule access before it is saved; this page only reports whether an ID was saved.</p>
   <pre id="status">Loading status…</pre>
+  <section class="diagnostics" aria-labelledby="diagnostics-heading">
+    <h2 id="diagnostics-heading">System diagnostics</h2>
+    <p id="diagnostics-message" role="status">Loading diagnostics…</p>
+    <div class="diagnostics-grid">
+      <div>
+        <h3>Lectio sources</h3>
+        <table>
+          <thead><tr><th>Source</th><th>State</th><th>Last successful sync</th></tr></thead>
+          <tbody id="source-diagnostics"></tbody>
+        </table>
+      </div>
+      <div>
+        <h3>Newest display bitmap</h3>
+        <p id="display-info">Waiting for display diagnostics…</p>
+        <p id="display-hash"></p>
+        <img id="display-preview" alt="Newest rendered 800 by 480 display bitmap" hidden>
+      </div>
+    </div>
+  </section>
   <iframe id="browser-view" title="Temporary Lectio browser" src="about:blank" data-view-url="{view_url}" allow="clipboard-read; clipboard-write"></iframe>
   <script>
     async function refresh() {{
@@ -318,6 +457,7 @@ async def auth_browser(request: Request) -> HTMLResponse:
       const response = await fetch(path, {{ method: 'POST', headers: {{ 'Content-Type': 'application/json' }} }});
       if (!response.ok) document.getElementById('status').textContent = await response.text();
       await refresh();
+      await refreshDiagnostics();
     }}
     async function configureStudentId(event) {{
       event.preventDefault();
@@ -339,10 +479,72 @@ async def auth_browser(request: Request) -> HTMLResponse:
       }} finally {{
         input.value = '';
         await refresh();
+        await refreshDiagnostics();
+      }}
+    }}
+    async function refreshDiagnostics() {{
+      const message = document.getElementById('diagnostics-message');
+      try {{
+        const response = await fetch('/auth/diagnostics', {{ cache: 'no-store' }});
+        if (!response.ok) throw new Error('Diagnostics unavailable');
+        const diagnostics = await response.json();
+        const auth = diagnostics.auth || {{}};
+        message.textContent = 'Authentication: ' + (auth.state || 'unknown')
+          + ' · student ID ' + (auth.student_id_available ? 'configured' : 'not configured');
+
+        const sourceNames = {{
+          schedule: 'Schedule',
+          assignments: 'Assignments',
+          homework: 'Homework',
+          cancellations: 'Cancellations'
+        }};
+        const rows = document.getElementById('source-diagnostics');
+        rows.replaceChildren();
+        for (const name of Object.keys(sourceNames)) {{
+          const source = (diagnostics.sources || {{}})[name] || {{}};
+          const row = document.createElement('tr');
+          const label = document.createElement('th');
+          const state = document.createElement('td');
+          const lastSuccess = document.createElement('td');
+          label.scope = 'row';
+          label.textContent = sourceNames[name];
+          state.textContent = (source.state || 'unknown') + (source.is_stale ? ' (stale)' : '');
+          lastSuccess.textContent = source.last_successful_sync
+            ? new Date(source.last_successful_sync).toLocaleString()
+            : 'Never';
+          row.append(label, state, lastSuccess);
+          rows.append(row);
+        }}
+
+        const display = diagnostics.display || {{}};
+        const info = document.getElementById('display-info');
+        const hash = document.getElementById('display-hash');
+        const preview = document.getElementById('display-preview');
+        if (display.available && display.image_url && display.content_hash) {{
+          info.textContent = 'Rendered ' + new Date(display.generated_at).toLocaleString();
+          hash.textContent = 'SHA-256: ' + display.content_hash;
+          preview.hidden = false;
+          if (preview.dataset.hash !== display.content_hash) {{
+            preview.src = display.image_url + '?v=' + encodeURIComponent(display.content_hash);
+            preview.dataset.hash = display.content_hash;
+          }}
+        }} else {{
+          info.textContent = display.state === 'not_rendered'
+            ? 'No display bitmap has been rendered yet.'
+            : 'Display diagnostics are unavailable.';
+          hash.textContent = '';
+          preview.removeAttribute('src');
+          preview.dataset.hash = '';
+          preview.hidden = true;
+        }}
+      }} catch {{
+        message.textContent = 'System diagnostics are temporarily unavailable.';
       }}
     }}
     refresh();
+    refreshDiagnostics();
     setInterval(refresh, 2000);
+    setInterval(refreshDiagnostics, 10000);
   </script>
 </body>
 </html>"""
