@@ -1879,6 +1879,31 @@ This section is the canonical running record for agent evidence, completed work,
 1. Proceed with Milestone 3 implementation using the persisted session without displaying or logging its contents.
 2. Keep assignments and homework marked unavailable until a supported source provides a student ID.
 
+## 2026-09-25 — Clarify student ID capture sources
+
+### Evidence and findings
+
+- `BrowserControl` currently obtains a student ID only from a numeric `LastLoginElevId` cookie or a numeric `elevid` query on the trusted Lectio student schedule URL. The earlier redacted diagnostics showed those sources absent before the successful authentication flow.
+- The gateway later reported `AUTHENTICATED`, but that check was deliberately filtered to state and session-file existence only. It did not establish whether the saved session's optional student ID is present. This entry corrects the previous entry's unverified statement that the authenticated session lacks the ID.
+- Inspection of the installed `python-lectio` 1.31.0 source confirms its cookie constructor reads both `LastLoginExamno` and `LastLoginElevId`. Its PyPI documentation mentions `client.elevId` for SDK login but also identifies its docs as belonging to an older branch that may not work ([PyPI](https://pypi.org/project/python-lectio/1.31.0/)).
+- The SDK's `informationer()` implementation requests `FindSkemaAdv.aspx` and iterates the page's select options. That path can enumerate other students, so it was not called or used as an identity lookup.
+
+### Tasks completed
+
+- Compared current candidate extraction with the pinned SDK's cookie-session requirements and documented safe versus broad lookup paths.
+- Kept the actual ID and cookie values private; did not open the persisted session file or print gateway status identifiers.
+
+### How it went
+
+- Authentication and persistence are proven. Student-ID presence remains unknown because the prior runtime checks intentionally did not inspect that field. The directory screenshot is not evidence that the session lacks or contains an ID.
+- No code changes were made in this investigation.
+
+### Next steps
+
+1. Add or use a redacted presence-only check for whether the persisted session has a student ID; never return the value.
+2. If absent, use a new temporary login and capture only the user's own individual schedule URL if it exposes `elevid`; do not scrape the school-wide student directory.
+3. Enable student-specific resources only after the ID source is captured and validated.
+
 ## 2026-09-25 — Diagnose missing Lectio identity cookies
 
 ### Evidence and findings
@@ -1906,3 +1931,30 @@ This section is the canonical running record for agent evidence, completed work,
 1. Build the updated auth-browser image, restart the temporary browser, and wait for manual Lectio/MitID sign-in.
 2. Have the user open the student Skema page once; inspect only redacted `/session/diagnostics` and gateway auth state.
 3. Keep Milestone 2 partial until candidate capture, real session validation, and persistence succeed.
+
+## 2026-09-25 — Recheck implementation progress and live authentication state
+
+### Evidence and findings
+
+- Re-read the repository Markdown context and checked the current tree. `main` is at `490fcdc`; the working tree was clean at the start of this recheck.
+- Since the earlier estimate, six commits landed after `e6fa1eb`, including isolated on-demand auth-browser lifecycle management, cookie diagnostics, default-schedule identity handling, and the live-authentication record.
+- `docker compose ps` showed the gateway, display service, and auth-lifecycle supervisor up and healthy. A read-only request to `/health` returned `ok`; `/auth/status` returned `AUTHENTICATED`. No session file contents, cookie values, or identity values were read.
+- The latest execution evidence records successful real Lectio login, candidate capture, gateway schedule-session validation, and persisted session metadata. This satisfies Milestone 2's real-account authentication gate and supersedes the earlier `WAITING_FOR_USER` diagnosis for the current runtime state.
+- The authenticated account's session does not expose a student ID. The schedule path is supported, but assignments and homework remain unavailable in this mode.
+- The service tree still has no normalized `/api/v1` Lectio data API/cache, Home Assistant custom integration, new display model/renderer, device API, custom firmware, or USB provisioning tool. The display service still only exposes `/health`.
+
+### Tasks completed
+
+- Rechecked committed history, current service tree, execution-log evidence, Compose service health, gateway health, and current gateway auth state.
+- Updated the effort-weighted estimate using the previous heuristic weights: Milestones 0–2 are now counted complete (35 weighted points); partial hardening and CI foundations contribute about 2.55 more points. Revised estimate: 37.55%, rounded to about 38%, with a rough uncertainty band of 35–42%.
+
+### How it went
+
+- This was a status recheck. No application code changed and no test suite was run. The Compose and auth-state requests were read-only runtime checks.
+- The revised estimate better reflects the completed high-risk login work. It is still a judgment-based effort model, not a measured schedule, and about 62% of modeled work remains.
+
+### Next steps
+
+1. Start Milestone 3: implement normalized gateway data endpoints, per-source sync/cache state, stale-data fallback, and auth-expiry behavior.
+2. Preserve the current limitation explicitly: assignments/homework need a supported student-ID source before they can be made available for this account.
+3. Continue with Home Assistant integration, display model/rendering, device API, firmware, USB provisioning, Tailnet operations, and the remaining hardening/CI scope.
