@@ -2064,3 +2064,59 @@ This section is the canonical running record for agent evidence, completed work,
 1. Install the custom component in the user's Home Assistant instance, configure the gateway URL, and verify calendar, to-do, sensor, and diagnostics behavior against the running gateway.
 2. Keep the private calendar HA-managed and separate from the Lectio calendar.
 3. Continue with the next planned display-model and rendering milestone after live HA validation.
+
+## 2026-09-25 — Recheck after gateway API and Home Assistant work
+
+### Evidence and findings
+
+- Re-read repository Markdown context. At the start of this recheck, `main` was at `3fd115d` and the working tree was clean.
+- Since the previous `490fcdc` snapshot, five commits added a redacted student-ID availability check, manual student-ID configuration, the resilient Lectio data API/cache, and the Home Assistant custom integration.
+- The current Compose gateway, display service, and auth-lifecycle supervisor are up and healthy. Read-only `/auth/status` and `/api/v1/status` checks report authenticated session state and all four Lectio sources `valid` and not stale. No assignment, homework, calendar item content, student ID, or cookie value was requested or displayed during this check.
+- The execution log records successful real Lectio requests for schedule, assignments, homework, and cancellations after the user configured the student ID. Milestone 3's API/cache checks passed (`80 passed` in the Python 3.12 service environment), including live source freshness and stale-cache coverage.
+- Milestone 4's custom integration, calendar, read-only to-do entities, sensors, coordinator, config flow, diagnostics, and tests are present. Its HA suite passed (`23 passed` under Python 3.14) and lint passed. A live Home Assistant setup/entity check has not been performed, so its acceptance remains partially unverified.
+- The display service still only exposes `/health`; no new display model/renderer, device API, custom firmware, or USB provisioner is present. Tailscale operations, full operational hardening, and full CI scope also remain unfinished.
+
+### Tasks completed
+
+- Rechecked current commits, source tree, milestone execution entries, Compose health, and redacted live gateway/source status.
+- Updated the same heuristic effort model: M0–M3 complete (43 weighted points), M4 at about 85% (8.5 points; live HA validation pending), and existing M13/M14 foundations at about 30%/60% (3 points combined). Revised estimate: 54.5%, rounded to about 55%, with a rough 52–60% uncertainty range.
+
+### How it went
+
+- This was a read-only progress check apart from this execution-log entry. No application files changed and no tests were run in this recheck. The recorded test results above are from the recent implementation entries, not new runs here.
+- The earlier 38% estimate is superseded by the gateway API/cache and HA implementation commits. The estimate remains subjective because the plan has no effort estimates.
+
+### Next steps
+
+1. Validate the custom integration in a live Home Assistant instance and resolve any setup/entity issues found there.
+2. Proceed to Milestone 5: build the deterministic three-day display model from HA calendar, todo, and cancellation data.
+3. Then implement the renderer, device API, firmware, USB provisioning, Tailnet operations, and remaining hardening/CI work.
+
+## 2026-09-25 — Implement Milestone 5 display model
+
+### Evidence and findings
+
+- Read all repository Markdown and inspected the M5 contract, the existing `better_lectio` calendar/todo/sensor attributes, Compose settings, and display-service test setup before implementation.
+- Home Assistant's REST service responses provide calendar `events` and to-do `items`; the existing integration also exposes per-source sync freshness on each Lectio-backed entity. The display service reads these Home Assistant entities only and does not call Lectio directly.
+- Review of the first implementation pass found four edge cases confirmed with focused regressions: Python compares same-zone datetimes by wall time through the autumn repeated hour; homework descriptions were dropped from the sidebar; old homework items could consume the limited sidebar; and cached HA entity data was marked valid without consulting its `sync` status. All four were corrected.
+
+### Tasks completed
+
+- Added a small asynchronous Home Assistant REST client for calendar events, outstanding to-do items, cancellation sensor attributes, and Lectio entity freshness metadata. Requests use bearer authentication, bounded timeouts, reject redirects, validate entity IDs, and sanitize errors.
+- Added immutable display model dataclasses and a deterministic model builder for today plus the next two Copenhagen dates. It merges Lectio and configured private calendars, preserves all-day dates, places overnight events on each affected day, and orders timed events by UTC instant across daylight-saving fall-back.
+- Added fixed sidebar ordering (cancellations, assignments, homework), urgency ordering within categories, completion filtering, configurable item limits, homework relevance filtering for remaining lessons in the three-day window, and homework descriptions as subtitles.
+- Added a model service that fetches HA data concurrently, preserves per-source last-good data, carries upstream `valid`/`stale`/`expired`/`error` metadata, and reports sanitized source failures independently.
+- Added tests for the typed model, deterministic timeline and sidebar selection, DST boundaries, multiple private calendars, stale source fallback, authenticated REST request shapes, and sanitized client errors. Added `aiohttp` as the display-service HTTP dependency.
+
+### How it went
+
+- Focused regressions first failed on each newly found behavior, then passed after the fixes.
+- Repository Python 3.12 suite passed: `94 passed in 3.87s`. Ruff passed. `docker compose config --quiet` passed. `docker compose build display-service` succeeded.
+- The Home Assistant REST behavior is exercised with a local mocked HTTP server and HA entity data fixtures. No live Home Assistant API or physical display was available for this milestone, so external entity IDs and live rendering remain unverified.
+- The display model is implemented as a reusable service layer; the existing display app still exposes only `/health`. Renderer and device API wiring remain in Milestone 6 and later.
+
+### Next steps
+
+1. Implement Milestone 6's renderer against the typed `DisplayModel`, preserving the single merged timeline and fixed sidebar hierarchy.
+2. Wire the renderer and model service into the display-service lifecycle and device-facing API in their planned milestones.
+3. Validate source entity IDs and freshness behavior against a live Home Assistant instance before claiming end-to-end integration verification.
