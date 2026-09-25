@@ -1523,13 +1523,14 @@ This section is the canonical running record for agent evidence, completed work,
 
 ### How it went
 
-- TDD began with a red collection failure because the adapter package did not exist; after implementation the local suite reported 33 passing tests and `make lint` passed. `make install-dev` installed the exact pinned dependency and editable gateway/display packages successfully.
-- `git diff --check` passed before the last small source-ID enrichment refinement; the final hosted CI run must confirm the complete branch contents.
+- TDD began with a red collection failure because the adapter package did not exist. GitHub Actions run `36126714981` passed all 34 tests, lint, Compose validation, and both image builds. `make install-dev` also installed the exact pinned dependency and editable gateway/display packages successfully.
+- GitHub Actions run `36126714981` verified the final branch contents after the source-ID enrichment refinement; the full checks job succeeded.
 - No live Lectio account/session was available. The synthetic fixtures establish parser behavior against the inspected structure, but real account validation and current page compatibility remain untested.
 - Self-review found no Critical or Important issue in the implementation. A live MitID/Lectio test remains explicitly pending for the authentication milestone.
+- Milestone 1's implementation and CI exit criteria are complete on PR #5; the live authenticated-account compatibility check remains pending.
 
 ### Next steps
 
-1. Run hosted CI for the adapter PR and fix any test, lint, dependency, Compose, or image-build failure.
+1. Hosted CI run `36126714981` passed tests, lint, Compose parsing, and service image builds; PR #5 remains open for review.
 2. Review the pinned dependency's AGPL-3.0 implications before distributing the combined application/image.
 3. Continue with Milestone 2 only after the adapter PR is reviewed; validate session handling against the user's real Lectio account during the browser-auth milestone.
