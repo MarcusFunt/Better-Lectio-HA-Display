@@ -1830,6 +1830,30 @@ This section is the canonical running record for agent evidence, completed work,
 2. Query only redacted `/session/diagnostics`, then verify gateway authentication and persisted-session file existence without reading session contents.
 3. Keep Milestone 2 partial until the live schedule-session path validates and persists successfully; then continue Milestone 3.
 
+## 2026-09-25 — Browser opened the student schedule directory
+
+### Evidence and findings
+
+- The latest user-provided screenshot shows Lectio's `FindSkema.aspx?type=elev` page titled “Vis skema for elev,” which is a student-directory/search route rather than the signed-in account's own `SkemaNy.aspx` schedule page. The screenshot contains student names; they were not transcribed or inspected.
+- Redacted live diagnostics report `WAITING_FOR_USER`, six Lectio cookies, missing expected identity cookies, a numeric school ID in the current page path, no student ID in the URL, `default_schedule_url: false`, and `candidate_available: false`.
+- Gateway authentication remains `WAITING_FOR_USER`; the session has not been validated or persisted.
+
+### Tasks completed
+
+- Compared the screenshot route with the allowlisted own-schedule route and checked only the redacted diagnostics and gateway state.
+- No code changes were needed: the current behavior correctly declines to create a candidate from a student-directory page.
+
+### How it went
+
+- The browser appears to have reached a Lectio page, but it is the directory view rather than the account's own schedule. No student names, cookie values, or numeric identifiers were returned, copied, or written to this plan.
+- Milestone 2 remains partial pending navigation to the account's own schedule, capture, validation, and persistence.
+
+### Next steps
+
+1. In the temporary browser, use Lectio's own `Skema` navigation to open the signed-in account's schedule; do not select a person from “Vis skema for elev.”
+2. Confirm the address is the default `SkemaNy.aspx` route, then recheck redacted diagnostics for `default_schedule_url: true` and `candidate_available: true`.
+3. Verify gateway authentication and session-file existence without reading session contents.
+
 ## 2026-09-25 — Diagnose missing Lectio identity cookies
 
 ### Evidence and findings
