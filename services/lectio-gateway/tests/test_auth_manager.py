@@ -1,6 +1,6 @@
 import asyncio
 
-from lectio_gateway.auth.manager import AuthManager
+from lectio_gateway.auth.manager import AuthManager, AuthState
 
 
 class FakeBrowser:
@@ -23,4 +23,26 @@ def test_gateway_startup_removes_a_browser_left_by_a_previous_process(tmp_path):
 
     asyncio.run(manager.initialize())
 
+    assert browser.stop_calls == 1
+
+
+def test_cancelling_reauthentication_keeps_the_expired_session_state(tmp_path):
+    async def cancel_flow(manager):
+        await manager.start()
+        return await manager.cancel()
+
+    manager = AuthManager(
+        data_dir=tmp_path,
+        browser_url="http://browser:8765",
+        browser_view_url="http://localhost:6080/vnc.html",
+        login_url="https://www.lectio.dk/",
+    )
+    browser = FakeBrowser()
+    manager._browser = browser
+    manager.mark_session_expired()
+
+    status = asyncio.run(cancel_flow(manager))
+
+    assert status.state == AuthState.SESSION_EXPIRED
+    assert "expired" in status.error.casefold()
     assert browser.stop_calls == 1

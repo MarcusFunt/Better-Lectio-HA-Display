@@ -88,6 +88,7 @@ class AuthManager:
         self.timeout_seconds = timeout_seconds
         self.poll_seconds = poll_seconds
         self.session: AuthenticatedLectioSession | None = None
+        self._session_expired = False
         self._task: asyncio.Task[None] | None = None
         self._lock = asyncio.Lock()
         self._status = AuthStatus(
@@ -107,6 +108,7 @@ class AuthManager:
             try:
                 raw = await asyncio.to_thread(self._session_path.read_text, encoding="utf-8")
                 self.session = AuthenticatedLectioSession.from_json(raw)
+                self._session_expired = False
                 self._set_state(AuthState.AUTHENTICATED)
                 return
             except (OSError, ValueError):
@@ -119,6 +121,14 @@ class AuthManager:
 
     def status(self) -> AuthStatus:
         return self._status
+
+    def mark_session_expired(self) -> None:
+        """Record an upstream signal that the stored Lectio session expired."""
+        self._session_expired = True
+        self._set_state(
+            AuthState.SESSION_EXPIRED,
+            error="Lectio session expired. Please sign in again.",
+        )
 
     async def start(self) -> AuthStatus:
         async with self._lock:
@@ -138,13 +148,24 @@ class AuthManager:
                 pass
         self._task = None
         await self._browser.stop()
-        target = AuthState.AUTHENTICATED if self.session is not None else AuthState.LOGIN_REQUIRED
-        self._set_state(target, error=None)
+        if self._session_expired:
+            target = AuthState.SESSION_EXPIRED
+        elif self.session is not None:
+            target = AuthState.AUTHENTICATED
+        else:
+            target = AuthState.LOGIN_REQUIRED
+        error = (
+            "Lectio session expired. Please sign in again."
+            if self._session_expired
+            else None
+        )
+        self._set_state(target, error=error)
         return self._status
 
     async def logout(self) -> AuthStatus:
         await self.cancel()
         self.session = None
+        self._session_expired = False
         try:
             await asyncio.to_thread(self._session_path.unlink, missing_ok=True)
         except OSError:
@@ -183,6 +204,7 @@ class AuthManager:
             except OSError as exc:
                 raise AuthSessionPersistenceFailed from exc
             self.session = verified
+            self._session_expired = False
             self._set_state(AuthState.AUTHENTICATED, error=None)
 
     async def shutdown(self) -> None:
@@ -249,6 +271,7 @@ class AuthManager:
                             )
                             await asyncio.to_thread(self._save_session, verified)
                             self.session = verified
+                            self._session_expired = False
                             self._set_state(AuthState.AUTHENTICATED, error=None)
                             await self._browser.complete()
                             return

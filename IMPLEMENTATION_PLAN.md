@@ -2008,3 +2008,30 @@ This section is the canonical running record for agent evidence, completed work,
 
 1. The user can enter their own ID at `http://localhost:8000/auth/browser` and select **Save and check**; the page reports success without returning the number.
 2. Once the boolean reports that an ID is available, validate student-specific resources against the user's Lectio session.
+
+## 2026-09-25 — Implement Milestone 3 Lectio data API and cache
+
+### Evidence and findings
+
+- The restarted gateway was healthy and `/api/v1/status` reported `AUTHENTICATED` with `student_id_available: true`; the identifier itself was not returned.
+- A live assignments request initially returned 502. A redacted diagnosis showed that the pinned `python-lectio` version parsed the assignment list but raised `AttributeError` on a group-assignment detail page whose expected table was absent. The list row still contained the normalized core assignment data.
+- After making detail-description enrichment optional, live requests for 2026-09-25 through 2026-09-28 returned HTTP 200 and fresh (`valid`, not stale) sync state for all four sources: schedule (2 items), assignments (3), homework (0), and cancellations (0). Only counts and sync metadata were printed; no student identifiers, assignment content, URLs, or cookies were exposed.
+
+### Tasks completed
+
+- Added versioned normalized endpoints for schedule, assignments, homework, and cancellations, plus a redacted API status response with per-source sync metadata.
+- Added a bounded, per-source/range and per-account cache with a five-minute default TTL, private persistent storage, last-good stale fallback, cache restoration after gateway restart, and per-source error status.
+- Added safe handling for missing authentication, missing student ID, expired sessions, upstream failures, invalid ranges, and session changes during requests. Expired sessions remain marked expired when reauthentication is cancelled.
+- Made assignment detail enrichment best-effort so a changed optional detail page does not discard the normalized assignment list; added a regression test for this live failure.
+- Built and restarted only the gateway, preserving its persistent data volume.
+
+### How it went
+
+- CI-equivalent checks in Python 3.12 passed: `80 passed in 2.87s`; selected Ruff checks passed. Compose configuration validation, gateway image build, live health check, and redacted live requests also passed.
+- A preliminary Windows Python 3.11 test run was not representative: it lacked the pinned `python-lectio` package and reported Windows-specific file-mode and fixture-encoding differences. Final test evidence is from the Python 3.12 environment used by CI.
+- The live assignment-list request was verified against the authenticated Lectio session. Optional descriptions may remain empty when Lectio's detail markup is not understood; core assignment list data still succeeds.
+
+### Next steps
+
+1. Start Milestone 4 by implementing the Home Assistant integration that consumes the gateway's normalized API and sync status.
+2. Keep device display rendering, device API/firmware, provisioning, and Tailnet work in their planned later milestones.

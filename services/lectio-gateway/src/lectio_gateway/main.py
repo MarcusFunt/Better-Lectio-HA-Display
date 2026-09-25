@@ -2,6 +2,7 @@ import html
 import os
 import re
 from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -16,6 +17,19 @@ from lectio_gateway.auth.manager import (
     AuthStatus,
     StudentIdRejected,
     StudentIdVerificationUnavailable,
+)
+from lectio_gateway.data_service import (
+    LectioAuthenticationRequired,
+    LectioDataService,
+    LectioSourceUnavailable,
+    LectioStudentIdRequired,
+)
+from lectio_gateway.lectio.models import (
+    LectioAssignment,
+    LectioCancellation,
+    LectioHomework,
+    LectioLesson,
+    LectioSourceResponse,
 )
 
 
@@ -39,6 +53,15 @@ async def lifespan(app: FastAPI):
     )
     await manager.initialize()
     app.state.auth_manager = manager
+    data_service = LectioDataService(
+        session_provider=lambda: manager.session,
+        cache_path=Path(os.getenv("LECTIO_DATA_DIR", "/var/lib/better-lectio"))
+        / "lectio-data-cache.json",
+        ttl_seconds=int(os.getenv("LECTIO_CACHE_TTL_SECONDS", "300")),
+        on_session_expired=manager.mark_session_expired,
+    )
+    await data_service.initialize()
+    app.state.lectio_data_service = data_service
     try:
         yield
     finally:
@@ -50,6 +73,10 @@ app = FastAPI(title="Better Lectio Gateway", lifespan=lifespan)
 
 def _manager(request: Request) -> AuthManager:
     return request.app.state.auth_manager
+
+
+def _data_service(request: Request) -> LectioDataService:
+    return request.app.state.lectio_data_service
 
 
 def _status_payload(current: AuthStatus) -> dict[str, object]:
@@ -87,6 +114,101 @@ async def auth_diagnostics(request: Request) -> dict[str, bool]:
             session is not None and session.student_id is not None
         )
     }
+
+
+@app.get("/api/v1/status")
+async def api_status(request: Request) -> dict[str, object]:
+    manager = _manager(request)
+    current = manager.status()
+    session = manager.session
+    return {
+        "auth": {
+            "state": current.state.value,
+            "student_id_available": (
+                session is not None and session.student_id is not None
+            ),
+            "last_verified_at": (
+                current.last_verified_at.isoformat()
+                if current.last_verified_at is not None
+                else None
+            ),
+            "error": current.error,
+        },
+        "sources": {
+            source: sync.model_dump(mode="json")
+            for source, sync in _data_service(request).statuses().items()
+        },
+    }
+
+
+async def _source_response(
+    request: Request,
+    source: str,
+    start: datetime,
+    end: datetime,
+) -> dict[str, object]:
+    if (
+        start.tzinfo is None
+        or start.utcoffset() is None
+        or end.tzinfo is None
+        or end.utcoffset() is None
+        or start >= end
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail="Use ordered start and end datetimes with timezone offsets.",
+        )
+    try:
+        items, sync = await _data_service(request).get_source(source, start, end)
+    except LectioAuthenticationRequired as exc:
+        raise HTTPException(
+            status_code=401, detail="Lectio sign-in is required."
+        ) from exc
+    except LectioStudentIdRequired as exc:
+        raise HTTPException(
+            status_code=409, detail="Configure a student ID for this Lectio source."
+        ) from exc
+    except LectioSourceUnavailable as exc:
+        raise HTTPException(
+            status_code=502, detail="The Lectio source is unavailable."
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail="Use ordered start and end datetimes with timezone offsets.",
+        ) from exc
+    return {
+        "items": [item.model_dump(mode="json") for item in items],
+        "sync": sync.model_dump(mode="json"),
+    }
+
+
+@app.get("/api/v1/schedule")
+async def api_schedule(
+    request: Request, start: datetime, end: datetime
+) -> LectioSourceResponse[LectioLesson]:
+    return await _source_response(request, "schedule", start, end)
+
+
+@app.get("/api/v1/assignments")
+async def api_assignments(
+    request: Request, start: datetime, end: datetime
+) -> LectioSourceResponse[LectioAssignment]:
+    return await _source_response(request, "assignments", start, end)
+
+
+@app.get("/api/v1/homework")
+async def api_homework(
+    request: Request, start: datetime, end: datetime
+) -> LectioSourceResponse[LectioHomework]:
+    return await _source_response(request, "homework", start, end)
+
+
+@app.get("/api/v1/cancellations")
+async def api_cancellations(
+    request: Request, start: datetime, end: datetime
+) -> LectioSourceResponse[LectioCancellation]:
+    return await _source_response(request, "cancellations", start, end)
 
 
 @app.post("/auth/start", status_code=status.HTTP_202_ACCEPTED)

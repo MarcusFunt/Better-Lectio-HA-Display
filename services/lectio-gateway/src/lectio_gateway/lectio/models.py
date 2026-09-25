@@ -1,6 +1,6 @@
 import json
 from datetime import datetime, timezone
-from typing import Literal
+from typing import Generic, Literal, TypeVar
 
 from pydantic import (
     AwareDatetime,
@@ -141,6 +141,18 @@ class LectioCancellation(BaseModel):
 class LectioSyncStatus(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    state: Literal["unknown", "valid", "expired", "error"] = "unknown"
+    state: Literal["unknown", "valid", "stale", "expired", "error"] = "unknown"
+    last_attempt_at: AwareDatetime | None = None
     last_successful_sync: AwareDatetime | None = None
+    is_stale: bool = False
     error: str | None = None
+
+
+LectioItem = TypeVar("LectioItem", bound=BaseModel)
+
+
+class LectioSourceResponse(BaseModel, Generic[LectioItem]):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    items: list[LectioItem]
+    sync: LectioSyncStatus

@@ -275,6 +275,20 @@ def test_client_normalizes_assignments_from_the_pinned_sdk():
     assert [item.id for item in asyncio.run(client.get_assignments(start, end))] == ["7001"]
 
 
+def test_assignment_end_is_exclusive_like_the_other_date_range_sources():
+    sdk = FakeSdk(
+        session=FakeHttpSession(FakeResponse(url="", text="")),
+        assignments=load_json("assignments.json"),
+    )
+    client = LectioClient(make_session(), sdk_client=sdk)
+    start = datetime(2026, 9, 1, tzinfo=COPENHAGEN)
+    end = datetime(2026, 9, 30, 23, 59, tzinfo=COPENHAGEN)
+
+    assignments = asyncio.run(client.get_assignments(start, end))
+
+    assert assignments == []
+
+
 def test_client_enriches_missing_assignment_description_from_sdk_details():
     sdk = FakeSdk(
         session=FakeHttpSession(FakeResponse(url="", text="")),
@@ -294,6 +308,33 @@ def test_client_enriches_missing_assignment_description_from_sdk_details():
     end = datetime(2026, 10, 1, tzinfo=COPENHAGEN)
     result = asyncio.run(client.get_assignments(start, end))
     assert result[0].description == "Skriv en kort analyse."
+
+
+def test_client_keeps_assignment_when_optional_detail_page_has_changed():
+    class ChangedDetailSdk(FakeSdk):
+        def opgave(self, exercise_id):
+            raise AttributeError("detail page has no expected group table")
+
+    sdk = ChangedDetailSdk(
+        session=FakeHttpSession(FakeResponse(url="", text="")),
+        assignments=[{
+            "exerciseid": "7001",
+            "opgavetitel": "Essay om klima",
+            "afleveringsfrist": "30-09-2026 23:59",
+            "hold": "Dansk A",
+            "status": "Ikke afleveret",
+        }],
+    )
+    client = LectioClient(make_session(), sdk_client=sdk)
+    start = datetime(2026, 9, 1, tzinfo=COPENHAGEN)
+    end = datetime(2026, 10, 1, tzinfo=COPENHAGEN)
+
+    result = asyncio.run(client.get_assignments(start, end))
+
+    assert len(result) == 1
+    assert result[0].id == "7001"
+    assert result[0].title == "Essay om klima"
+    assert result[0].description is None
 
 
 def test_client_translates_upstream_expired_session_error():

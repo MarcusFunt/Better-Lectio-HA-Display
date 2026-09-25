@@ -241,13 +241,24 @@ class LectioClient:
         )
         in_range = [
             item for item in assignments
-            if item.due is None or start <= item.due <= end
+            if item.due is None or start <= item.due < end
         ]
         enriched = []
         for assignment in in_range:
             if assignment.description is None and assignment.source_id is not None:
-                details = self._invoke_sdk("opgave", assignment.source_id)
-                oplysninger = details.get("oplysninger", {}) if isinstance(details, dict) else {}
+                try:
+                    details = self._invoke_sdk("opgave", assignment.source_id)
+                except LectioSessionExpired:
+                    raise
+                except LectioAdapterError:
+                    # Assignment details are optional. Keep the normalized list row
+                    # when Lectio changes its detail markup or that page is unavailable.
+                    details = None
+                oplysninger = (
+                    details.get("oplysninger", {})
+                    if isinstance(details, dict)
+                    else {}
+                )
                 description = (
                     str(oplysninger.get("opgavebeskrivelse") or "").strip() or None
                     if isinstance(oplysninger, dict)
