@@ -2389,11 +2389,13 @@ This section is the canonical running record for agent evidence, completed work,
 
 - Updated `.github/workflows/ci.yml` to run the full Python test and lint commands inside a disposable `python:3.12-slim` container with the same DejaVu font dependency as the display image. Compose validation and service-image builds remain on the hosted runner.
 - Re-ran the exact new workflow test/lint command in a disposable `python:3.12-slim` container: `117 passed in 4.07s` and Ruff passed. A clean Ubuntu 24.04 container also passed the full suite (`117 passed in 4.41s`); `docker compose config --quiet` passed.
+- Rebuilt the service images and recreated the display-service container from the latest `main` checkout. `docker compose ps` reported all three application services healthy, and `http://127.0.0.1:8001/health` returned HTTP 200.
 
 ### How it went
 
 - The Home Assistant CI job passed in run `36191766201`; no HA code or workflow change was needed. The first hosted-runner font installation did not fix the snapshot failures.
 - GitHub Actions run [`36192849340`](https://github.com/MarcusFunt/Better-Lectio-HA-Display/actions/runs/36192849340) for commit `f192aac` passed both jobs: the service-environment tests/lint, Compose validation, image builds, and the Home Assistant integration checks.
+- The local Compose stack was refreshed after finding its display-service container predated the latest application-code commit. `make` was unavailable in the Windows shell, so the equivalent Docker Compose build and up commands from the Makefile target were run directly; the rebuilt display container and the full stack became healthy.
 
 ### Next steps
 
