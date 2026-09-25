@@ -2430,3 +2430,35 @@ This section is the canonical running record for agent evidence, completed work,
 ### Next steps
 
 1. After Home Assistant is configured and has produced an image, open the local login page and verify the live bitmap preview.
+
+## 2026-09-26 — Home Assistant connection handoff
+
+### Evidence and findings
+
+- Re-read all repository Markdown and inspected current `main` at `a3a95b9`, the Home Assistant custom integration, Compose networking, display-service HA client, and current diagnostics path before documenting the live hookup procedure.
+- The project requires two independent connections: Home Assistant → Lectio Gateway through the custom `better_lectio` integration, and Display Service → Home Assistant through the HA REST API.
+- The custom integration is not packaged through HACS. It must currently be copied as `home-assistant/custom_components/better_lectio` into the Home Assistant configuration directory at `custom_components/better_lectio`, followed by a Home Assistant restart. The manifest already declares `config_flow: true` and version `0.1.0`.
+- The config flow asks only for a gateway base URL and immediately verifies `GET /api/v1/status`. It then creates six entities: one Lectio calendar, assignment and homework todo lists, and cancellation/session/last-sync sensors.
+- Current Compose publishes the gateway only on `127.0.0.1:8000`. A Home Assistant instance on another machine cannot use that loopback address. For a remote HA host, use a private path such as Tailscale Serve to the localhost gateway if HA participates in the Tailnet, or explicitly design a protected LAN exposure before rebinding the gateway.
+- The display service requires `HOME_ASSISTANT_URL` and `HOME_ASSISTANT_TOKEN`. The token is a Home Assistant long-lived access token and the URL must be reachable from the display-service container, not merely from a browser on the host.
+- The current display model still expects the default entity IDs `calendar.lectio`, `todo.lectio_assignments`, `todo.lectio_homework`, `sensor.lectio_cancellations`, and private calendar `calendar.private`. During this first live integration pass, ensure HA uses those IDs or rename them accordingly.
+- The gateway's login page now includes source freshness and newest bitmap diagnostics. Once HA is connected and the display service has rendered, that page provides a convenient final verification of the complete software data path.
+
+### Tasks completed
+
+- Defined the exact live connection sequence: make gateway reachable from HA, install/restart the custom integration, configure Better Lectio in HA, verify all six entities, create/verify the private local calendar, create an HA long-lived token, configure the display service with the HA URL/token, recreate the display service, and verify the bitmap through the login-page diagnostics.
+- Identified deployment-dependent URL choices and the current loopback-bound gateway constraint.
+- No application/runtime files were changed and no live Home Assistant connection was claimed.
+
+### How it went
+
+- This was a documentation/handoff task. The repository contains all software needed for a first live Home Assistant test, but the actual HA deployment topology (HA OS vs Container/VM, same host vs separate host, and whether the HA host is on the Tailnet) is not recorded, so the procedure includes the appropriate network variants.
+- Official Home Assistant documentation confirms custom integrations live under `<config>/custom_components`, long-lived access tokens are created from the user profile Security tab, and a restart is required to load newly copied custom integration code.
+
+### Next steps
+
+1. Perform the live Home Assistant installation and connection using the documented sequence.
+2. Confirm the exact entity IDs and gateway reachability from HA; if entity IDs differ, rename/configure them before testing the display service.
+3. Configure the display service HA URL/token and verify that the login-page diagnostics show a current rendered bitmap.
+4. Record actual live HA entity and rendering results after the test.
+
