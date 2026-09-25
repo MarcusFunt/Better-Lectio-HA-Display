@@ -1,4 +1,5 @@
 import json
+from datetime import datetime, timezone
 from typing import Literal
 
 from pydantic import (
@@ -46,10 +47,14 @@ class AuthenticatedLectioSession(BaseModel):
     school_id: str = Field(pattern=r"^\d+$")
     student_id: str = Field(pattern=r"^\d+$")
     cookies: tuple[LectioCookie, ...]
+    created_at: AwareDatetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc)
+    )
+    last_verified_at: AwareDatetime | None = None
 
     def to_json(self) -> str:
         """Serialize secrets for an explicit persistence operation."""
-        data = self.model_dump(exclude={"cookies"})
+        data = self.model_dump(mode="json", exclude={"cookies"})
         data["cookies"] = [
             {
                 "name": cookie.name,

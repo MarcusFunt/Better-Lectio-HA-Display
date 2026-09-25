@@ -1534,3 +1534,110 @@ This section is the canonical running record for agent evidence, completed work,
 1. Hosted CI run `36126714981` passed tests, lint, Compose parsing, and service image builds; PR #5 remains open for review.
 2. Review the pinned dependency's AGPL-3.0 implications before distributing the combined application/image.
 3. Continue with Milestone 2 only after the adapter PR is reviewed; validate session handling against the user's real Lectio account during the browser-auth milestone.
+
+## 2026-09-25 — Pull latest changes and restart local Compose services
+
+### Evidence and findings
+
+- Read all repository Markdown files recursively before acting. The working tree was clean and `main` tracked `origin/main` at `e92471a` before the pull.
+- `git pull --ff-only` completed successfully and reported `Already up to date`; no upstream commits needed merging.
+- The Compose project contains the `lectio-gateway` and `display-service` containers with persistent named volumes.
+
+### Tasks completed
+
+- Rebuilt images and force-recreated both containers with `docker compose up --build --detach --force-recreate`.
+- Confirmed `docker compose ps` reports both services `Up` and `healthy` after recreation.
+- Confirmed both in-container `/health` requests returned HTTP 200.
+
+### How it went
+
+- Pull and restart succeeded. Existing named volumes were retained.
+- No project tests or external Lectio, Home Assistant, Tailnet, firmware, or hardware integrations were run. The containers still provide only the scaffold health endpoints.
+
+### Next steps
+
+1. Continue implementation at Milestone 1 when application behavior is next requested.
+2. The local Compose services remain running; stop them with `docker compose down` when no longer needed.
+
+## 2026-09-25 — Retry origin fetch, pull, and restart
+
+### Evidence and findings
+
+- The earlier `git pull --ff-only` used a stale `origin/main` tracking ref and reported no changes. A fresh `git fetch origin` advanced `origin/main` from `e92471a` to `7a5ba3e`.
+- The fetched merge includes commits `1940ba7` and `195d9a5` for the Lectio adapter and its CI progress, plus merge commit `7a5ba3e`.
+- The update added the typed Lectio adapter, parser fixtures, and gateway dependencies. The app's API surface remains the scaffold health endpoint; the adapter is not yet exposed through new HTTP routes.
+- The local execution-log entry from the earlier restart was stashed before fast-forwarding. Applying it conflicted because upstream also appended to `IMPLEMENTATION_PLAN.md`; the conflict was resolved with both entries retained.
+
+### Tasks completed
+
+- Fast-forwarded `main` to `7a5ba3e` with `git pull --ff-only origin main`.
+- Rebuilt and force-recreated both containers with `docker compose up --build --detach --force-recreate`. The gateway image installed the new pinned `python-lectio==1.31.0` dependency.
+- Confirmed both containers are `Up` and `healthy`; both in-container `/health` requests returned HTTP 200.
+
+### How it went
+
+- The retry succeeded. Compose retained the named data volumes.
+- No project test suite or live Lectio/MitID, Home Assistant, Tailnet, firmware, or hardware integration was run. Gateway health confirms process startup, not live Lectio compatibility.
+
+### Next steps
+
+1. Proceed to Milestone 2 only after review of the adapter implementation; real authenticated Lectio validation remains pending.
+2. Assess the pinned dependency's AGPL-3.0 implications before distributing the combined image.
+3. The local Compose services remain running; stop them with `docker compose down` when no longer needed.
+
+## 2026-09-25 — Milestone 2 implementation (partial): Phase-1 manual browser authentication
+
+### Evidence and findings
+
+- Read all four repository Markdown files recursively before continuing implementation, as required by `AGENTS.md`.
+- The repository is at `7a5ba3e` (`origin/main`) with the Lectio adapter already merged. Existing local changes from the authentication implementation and the staged progress entry were preserved.
+- `docker compose up --build --detach --force-recreate` built the gateway, display, and new authentication browser images and recreated the Compose services successfully.
+- `docker compose ps` reports all three services `Up` and `healthy`. Gateway endpoints `/health`, `/auth/status`, and `/auth/browser` returned HTTP 200. The gateway reached the browser controller's `/health` endpoint with HTTP 200, and the noVNC `vnc.html` page returned HTTP 200.
+- Host bindings are restricted to `127.0.0.1:8000` for the gateway and `127.0.0.1:6080` for the browser view. The browser control API on port 8765 is not published to the host.
+- `git diff --check` completed without whitespace errors. No project test suite was run. No Lectio/MitID login was performed; live session acceptance remains unverified pending the user's manual login.
+
+### Tasks completed
+
+- Added a separate Playwright browser service that opens an isolated, non-persistent headed Chromium context on demand at the Lectio homepage and exposes it through a local noVNC view.
+- Added gateway authentication routes and a local sign-in page with start, cancel, logout, and status actions. The current page is loopback-only; Tailnet access remains for the later operations milestone. MitID interaction remains manual; the implementation does not fill credentials or approve authentication prompts.
+- Added cookie candidate extraction, session validation through the existing `LectioClient`, private session/status persistence, and authenticated-session timestamps.
+- Added Compose networking and loopback-only host ports, runtime dependencies, lint discovery, environment defaults, and updated existing Compose structure assertions.
+
+### How it went
+
+- Image build and local container startup succeeded. Health and route responses confirm the services are running, but they do not establish compatibility with a real Lectio account. Milestone 2 is partial until the real-account exit criteria are met.
+- The Chromium context is created on request and closed after success, cancellation, or timeout. The controller/noVNC sidecar container itself currently remains running while idle. This differs from `ARCHITECTURE_AND_OPERATIONS.md`, which requires the browser service/container to start for authentication and stop afterward. Container-level lifecycle control has not been added; doing so without a broader controller would require a privileged Docker control path. Keep this discrepancy visible and resolve it before treating the architecture's lifecycle requirement as complete.
+- `README.md` still reflects the earlier health-only scaffold, but `AGENTS.md` restricts routine progress/documentation changes to this implementation plan. The README was not edited.
+- No test suite was run. Real MitID/Lectio authentication, session persistence with real cookies, Home Assistant, Tailscale, firmware, and hardware remain unverified.
+
+### Next steps
+
+1. Open `http://localhost:8000/auth/browser`, start browser login, and manually complete Lectio/MitID authentication; confirm the gateway validates and persists the session.
+2. Resolve the browser sidecar container-lifecycle discrepancy without exposing an unnecessarily privileged Docker API to the gateway.
+3. Add Tailnet access to the browser view as part of Milestone 10, keeping it private and preserving loopback-only defaults meanwhile.
+4. Continue with the next planned data-sync milestone after session validation, keeping the real-account check separate from fixture-based evidence.
+
+## 2026-09-25 — Run project tests before manual sign-in
+
+### Evidence and findings
+
+- The user requested the project test suite before signing in. The documented Make target runs `python -m pytest -q tests services/lectio-gateway/tests services/display-service/tests`.
+- The host interpreter is Python 3.11.4, below the gateway/display packages' declared Python 3.12 minimum, and its global environment lacked the legacy `icalendar` dependency and the installed service packages. The host run therefore failed during collection and was not treated as a valid suite result.
+- The same suite was run in a disposable container based on the project's Python 3.12 gateway image. The repository was copied from a read-only bind mount into the disposable container, and `requirements-dev.txt` plus both service test extras were installed there.
+- The first Python 3.12 run collected 34 tests and found one failure in `test_session_json_restores_cookie_without_leaking_repr`: `AuthenticatedLectioSession.to_json()` passed the newly added timestamps as Python `datetime` values to `json.dumps`.
+- After the serialization fix, the same suite completed with `34 passed in 0.59s`.
+
+### Tasks completed
+
+- Updated `AuthenticatedLectioSession.to_json()` to serialize non-cookie fields with Pydantic's JSON mode, while continuing to reveal cookie values only in this explicit persistence method.
+- Rebuilt and force-recreated the gateway service so the running container includes the fix. `docker compose ps` reports all services healthy; `/health` and `/auth/status` return HTTP 200, with auth state `LOGIN_REQUIRED`.
+
+### How it went
+
+- The initial host run exposed an incomplete local Python environment, not a code-level test result. Running in the supported Python 3.12 environment produced one actionable failure; the fix passed the full suite.
+- No live Lectio/MitID login was attempted. The sign-in flow is now ready for the user's manual step.
+
+### Next steps
+
+1. Open `http://localhost:8000/auth/browser`, start browser login, and manually complete Lectio/MitID authentication.
+2. Confirm the gateway validates the real session and persists it before treating Milestone 2's end-to-end criteria as complete.

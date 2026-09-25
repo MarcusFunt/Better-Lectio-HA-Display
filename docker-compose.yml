@@ -6,11 +6,23 @@ services:
     restart: unless-stopped
     environment:
       LECTIO_DATA_DIR: /var/lib/better-lectio
+      LECTIO_AUTH_BROWSER_URL: http://lectio-auth-browser:8765
+      LECTIO_AUTH_BROWSER_VIEW_URL: ${LECTIO_AUTH_BROWSER_VIEW_URL:-http://localhost:6080/vnc.html?autoconnect=true&resize=scale}
+      LECTIO_AUTH_TIMEOUT_SECONDS: ${LECTIO_AUTH_TIMEOUT_SECONDS:-900}
+      LECTIO_LOGIN_URL: https://www.lectio.dk/
       TZ: ${TIMEZONE:-Europe/Copenhagen}
     volumes:
       - lectio-gateway-data:/var/lib/better-lectio
     expose:
       - "8000"
+    ports:
+      - "127.0.0.1:8000:8000"
+    networks:
+      - default
+      - lectio-auth-control
+    depends_on:
+      lectio-auth-browser:
+        condition: service_healthy
     healthcheck:
       test:
         - CMD
@@ -21,6 +33,31 @@ services:
       timeout: 3s
       retries: 3
       start_period: 10s
+
+  lectio-auth-browser:
+    build:
+      context: ./services/lectio-auth-browser
+    init: true
+    restart: unless-stopped
+    shm_size: 1gb
+    environment:
+      TZ: ${TIMEZONE:-Europe/Copenhagen}
+    expose:
+      - "8765"
+    ports:
+      - "127.0.0.1:6080:6080"
+    networks:
+      - lectio-auth-control
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/health', timeout=2)"
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 15s
 
   display-service:
     build:
@@ -50,3 +87,7 @@ services:
 volumes:
   lectio-gateway-data:
   display-service-data:
+
+networks:
+  default:
+  lectio-auth-control:
