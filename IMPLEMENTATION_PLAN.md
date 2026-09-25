@@ -1472,3 +1472,32 @@ This section is the canonical running record for agent evidence, completed work,
 1. Open a PR for this scaffold and verify that CI's Compose validation and image builds pass; fix any failures before marking Milestone 0 complete.
 2. Proceed to Milestone 1: define the normalized Lectio domain models and adapter boundary, pin the selected `python-lectio` source, and add fixture-driven tests before implementing the Phase-1 browser flow.
 3. Keep the first real MitID/Lectio session test explicitly pending until it is run against the user's account.
+
+## 2026-09-25 — Start the Docker scaffold locally
+
+### Evidence and findings
+
+- Read all four repository Markdown files recursively before making changes, as required by `AGENTS.md`.
+- The working tree was clean at the start of this task. Docker Engine 29.7.2 and Docker Compose 5.4.0 are installed and available.
+- `docker-compose.yml` already defines the `lectio-gateway` and `display-service` containers, persistent named data volumes, container health checks, and internal-only port exposure. It does not publish host ports, matching the current architecture and README.
+- `docker compose config --quiet` completed successfully. Both service images built from their local Dockerfiles, and `docker compose up --build --detach` started both services.
+- `docker compose ps` reported both containers `Up` and `healthy`. A direct request to each container's `/health` endpoint returned HTTP 200.
+- The new services currently implement health endpoints only. Lectio login/data access, Home Assistant integration, rendering, and device APIs are not implemented yet. No `.env` file or Home Assistant token was needed to start this scaffold.
+
+### Tasks completed
+
+- Started the local Compose project with `docker compose up --build --detach`.
+- Confirmed Compose configuration, successful image builds, container health, and both in-container health responses.
+- Left application configuration and host port exposure unchanged; no runtime source/configuration files were modified.
+
+### How it went
+
+- Local Docker setup succeeded with both containers healthy and their data persisted in named volumes.
+- No project test suite was run. No Lectio/MitID, Home Assistant, Tailnet, firmware, or physical display integration was exercised.
+- The containers are reachable only on the Compose network; Compose currently publishes no ports to Windows, so the health endpoints are not available directly at `localhost`.
+
+### Next steps
+
+1. Use `docker compose down` from the repository root when the local scaffold should be stopped; named volumes are retained by default.
+2. Continue with Milestone 1 to implement and validate the Lectio adapter before adding authentication and user-facing host access.
+3. Keep this local run separate from claims that the full display application is operational; only the health-only service scaffold is running.
