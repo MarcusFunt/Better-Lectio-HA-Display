@@ -129,6 +129,11 @@ def validate_display_bmp(bmp: bytes) -> None:
         or _u32(bmp, 34) != 48_000
     ):
         raise ValueError("BMP must be an uncompressed 800x480 1-bit Windows bitmap")
+    if bmp[54:62] not in {
+        b"\x00\x00\x00\x00\xff\xff\xff\x00",
+        b"\xff\xff\xff\x00\x00\x00\x00\x00",
+    }:
+        raise ValueError("BMP must use a supported monochrome palette")
 
 
 def _u16(value: bytes, offset: int) -> int:

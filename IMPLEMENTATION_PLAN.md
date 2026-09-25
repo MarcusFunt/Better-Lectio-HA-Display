@@ -2284,6 +2284,40 @@ This section is the canonical running record for agent evidence, completed work,
 3. Implement and verify the custom firmware, then build the USB provisioning tool against the device API and real board protocol.
 4. Complete Tailnet operations, remaining operational hardening and CI coverage, and then perform the Phase-2 auth-flow analysis before deciding whether Phase 3 is feasible.
 
+## 2026-09-25 — Final release verification and weighted progress refresh
+
+### Evidence and findings
+
+- Reconciled the previous weighted assessment with the completed renderer work above. The earlier 68% figure treated Milestone 6 as 45% complete before Tasks 3–5 and their snapshots were completed; this entry supersedes that estimate.
+- The current working tree includes the renderer, display API and device registry changes, plus a refresh guard that keeps the previous image until calendar sources recover, the final renderer bottom boundary that reserves footer space, and the new tests for these behaviors.
+- Compared the BMP validator with the firmware parser at `firmware/lib/trmnl/src/bmp.cpp`. The firmware supports only the standard black/white palette and its reversed order. A new test first failed because a red/blue palette was accepted; after adding the palette check, tests confirmed both supported orders pass and the unsupported palette is rejected.
+- The previous weighted milestone values remain in use: M0 8%, M1 12%, M2 15%, M3 8%, M4 10%, M5 5%, M6 7%, M7 5%, M8 9%, M9 5%, M10 4%, M11 3%, M12 2%, M13 4%, and M14 3%.
+- Updated completion assumptions: M0 100%, M1 100%, M2 100%, M3 100%, M4 85%, M5 100%, M6 100%, M7 100%, M8 0%, M9 0%, M10 0%, M11 0%, M12 0%, M13 35%, and M14 65%.
+- Weighted calculation: `8 + 12 + 15 + 8 + 8.5 + 5 + 7 + 5 + 0 + 0 + 0 + 0 + 0 + 1.4 + 1.95 = 71.85%`.
+
+### Tasks completed
+
+- Corrected the image-store BMP validator to enforce the two palette encodings accepted by the XIAO firmware and added regression tests for supported and unsupported palettes.
+- Re-ran the repository Python suite against the complete current tree: `117 passed in 4.38s`.
+- Ran Home Assistant integration checks: `23 passed` with five upstream deprecation warnings. The Home Assistant Ruff check passed.
+- Ran repository Ruff checks and Compose configuration validation successfully. The first Ruff run caught import ordering in the new test; imports were fixed and the full Ruff check passed.
+- Built the Compose auth-browser profile images and recreated the default running services without removing named volumes. Display service, gateway, and auth lifecycle all reached healthy status.
+- Verified `/health` on the running display service and gateway. The running display container rendered and validated a 48,062-byte BMP with the firmware-compatible palette. Its running image index was `sha256:507f403dad05b40f78ea88b0d679b7f3d497ecea5c2d5de149330ea444be2da0` and platform manifest was `sha256:135bc374b35a236d312a24938cd09f1127c05735a3c230883c6f0d5982dd2921`.
+- Assessed overall implementation progress at **about 72% complete**, with **about 28% of weighted implementation effort remaining**. This is an effort-weighted estimate, not a delivery-date forecast; a reasonable uncertainty band is 68–76%.
+
+### How it went
+
+- The firmware palette finding was confirmed directly against the current firmware parser and closed with a failing-then-passing regression test.
+- The plan progress estimate now reflects the renderer and snapshot tasks recorded as complete above. Milestone 4 still lacks live Home Assistant validation; firmware, USB provisioning, Tailnet operations, later authentication analysis, and portions of hardening remain open.
+- The README status is stale about the display API and configurable host port. Per the repository Markdown write policy, it remains unchanged; this finding is recorded here for a future explicitly authorized documentation task.
+- No live Home Assistant or physical display check has been performed.
+
+### Next steps
+
+1. Commit the complete working tree and push `main` to `origin`; record the resulting commit and remote verification here.
+2. Validate the Home Assistant integration against a live instance, then implement and validate the custom firmware and USB provisioning path.
+3. Complete Tailnet operations and remaining hardening; perform the Phase-2 authentication analysis before deciding whether Phase 3 is feasible.
+
 ## 2026-09-25 — Resolve renderer review and verify the implementation
 
 ### Evidence and findings
@@ -2312,3 +2346,30 @@ This section is the canonical running record for agent evidence, completed work,
 
 1. Continue with live Home Assistant and physical display verification when those environments are available.
 2. Add a human-facing source-freshness diagnostics surface during operational hardening.
+
+## 2026-09-25 — Final release handoff
+
+### Evidence and findings
+
+- The renderer/device API implementation was already committed and pushed before this handoff update: `f47d64f` (`feat: implement display renderer and device API`), followed by `8be7bcb` (`docs: record renderer implementation push`). At the start of this release pass, local `main` and `origin/main` both pointed at `8be7bcb`.
+- A final review confirmed the revised effort-weighted estimate at 71.85%, rounded to **about 72% complete** and **about 28% remaining**. Milestones 6 and 7 are counted complete; the uncertainty band is 68–76%.
+- The review highlighted the refresh guard in `DisplayBackend.refresh_if_due`: after restart, it retains the entire previous display image until every reported calendar source is usable. This intentionally prevents an incomplete calendar response from erasing events from an unavailable source, but also delays new data from healthy calendars and the sidebar during that outage. This handoff retains the already-pushed fail-safe behavior under the requested release of all current changes; durable per-source calendar persistence would allow partial recovery without that freshness cost and remains a follow-up design task.
+- The new BMP palette check is based on the firmware parser's two supported byte sequences. The regression first failed when the unsupported palette was accepted; after the check, all tests passed.
+
+### Tasks completed
+
+- Built all Compose profile images and recreated the default services while preserving named volumes. The display service, gateway, and auth-lifecycle service are healthy; `/health` returned success for the display and gateway.
+- The running display service rendered and validated a 48,062-byte BMP using the firmware-compatible palette. The deployed `image_store.py` SHA-256 (`592137cd925c79066a52fc3edab71e2fd3b0cf2df47de650033384a608fdfd75`) matches the current source file.
+- Final Python suite passed: `117 passed in 4.38s`. Home Assistant suite passed: `23 passed` with five upstream deprecation warnings. Repository and Home Assistant Ruff checks and `docker compose config --quiet` passed.
+- `git diff --check HEAD` passed and the diff credential scan found no likely literal credentials. The palette validator, its tests, and this updated plan entry are the remaining working-tree changes for the release commit.
+
+### How it went
+
+- The renderer/API commits are already on `origin/main`; this release pass adds the firmware palette validation and corrects the weighted progress handoff after renderer completion.
+- The review's refresh-policy concern is explicitly recorded with its operational cost. No live Home Assistant request or physical e-paper display check was performed.
+
+### Next steps
+
+1. Commit the remaining validator, regression tests, and plan update; push `main` to `origin` and confirm remote `main` matches the resulting commit.
+2. Record that final commit and confirm the running service still uses the matching source after the push.
+3. Consider durable per-source display-model persistence during operational hardening; continue with live Home Assistant and physical display validation when available.
