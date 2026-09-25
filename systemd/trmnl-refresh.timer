@@ -1,0 +1,12 @@
+[Unit]
+Description=Refresh the TRMNL display every 15 minutes
+
+[Timer]
+OnBootSec=3min
+OnCalendar=*:0/15
+AccuracySec=1min
+Persistent=true
+Unit=trmnl-refresh.service
+
+[Install]
+WantedBy=timers.target
