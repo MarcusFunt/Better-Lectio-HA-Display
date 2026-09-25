@@ -2430,3 +2430,186 @@ This section is the canonical running record for agent evidence, completed work,
 ### Next steps
 
 1. After Home Assistant is configured and has produced an image, open the local login page and verify the live bitmap preview.
+
+## 2026-09-26 — Plan canonical cache, stale HA availability, and entity-role configuration
+
+### Evidence and findings
+
+- The user approved the design covering all three requested areas. The approved spec is `docs/superpowers/specs/2026-09-26-canonical-lectio-cache-ha-freshness-entity-config-design.md`.
+- The original requirement day-aligns both assignments and homework. The first spec draft only named homework; corrected it before planning, then updated the approval status and resolved cache migration and aggregate sync metadata choices.
+- Gateway cache and adapter code are in `services/lectio-gateway/src/lectio_gateway/data_service.py` and `lectio-gateway/src/lectio_gateway/lectio/client.py`. Existing regression suites are `services/lectio-gateway/tests/test_data_service.py`, `test_gateway_api.py`, and `test_lectio_adapter.py`.
+- The HA coordinator already retains per-source items in `home-assistant/custom_components/better_lectio/coordinator.py`, but calendar, todo, and sensor entity availability in `calendar.py`, `todo.py`, and `sensor.py` follows `last_update_success`. Existing entity and coordinator cases are in `home-assistant/tests/test_entities.py` and `test_coordinator.py`.
+- Display roles are fixed in `services/display-service/src/display_service/model_builder.py` and `model_service.py`; startup wiring is in `main.py`. The current constructor already accepts multiple private calendar IDs. Compose and environment defaults are in `docker-compose.yml` and `.env.example`.
+- At plan drafting start, the only untracked path was the approved design spec; no application code had been changed and no tests had been run for this feature.
+
+### Approved implementation plan
+
+# Canonical Lectio Cache, HA Availability, and Display Entity Configuration — Implementation Plan
+
+> **For agentic workers:** Use `superpowers:executing-plans` if the user selects native execution. Keep the implementation test-first and work through the tasks in order. This task plan is recorded here because `AGENTS.md` names `IMPLEMENTATION_PLAN.md` as the single canonical progress/evidence log and prohibits a second plan document.
+
+**Goal:** Reuse canonical Lectio schedule weeks across endpoints, retain usable HA data as stale after failures, and configure display HA entity IDs by semantic role.
+
+**Architecture:** The gateway will persist owner-scoped ISO-week schedule pages and compose schedule, homework, and cancellation results from that shared store. The HA integration will base entity availability on per-source successful-history markers while preserving existing sync metadata. The display service will parse typed entity-role configuration at startup and inject it into the model service; HA remains its only data source.
+
+**Tech Stack:** Python 3.12+, Pydantic, FastAPI, `zoneinfo`, Home Assistant custom integration, pytest, Ruff, Docker Compose.
+
+**Spec:** `docs/superpowers/specs/2026-09-26-canonical-lectio-cache-ha-freshness-entity-config-design.md`
+
+#### Global constraints
+
+- Keep gateway route paths and response envelopes unchanged.
+- Use `Europe/Copenhagen` for schedule-week calculations and assignment/homework local-day bounds.
+- Keep cache entries scoped by the existing private owner HMAC and preserve file permissions.
+- Keep source-specific last-known-good data and expose stale/expired sync metadata after failures.
+- Keep the display service dependent on Home Assistant; do not add a direct Lectio connection.
+- Preserve current entity IDs as configuration defaults; an empty private-calendar list disables that role.
+- Do not claim live Lectio, live Home Assistant, or hardware verification unless actually exercised.
+
+#### Review focus
+
+1. Copenhagen week/day bounds at ISO-year transitions, exact exclusive midnights, and daylight-saving changes — pin with cache canonicalization tests in Tasks 2–3.
+2. Mixed complete, missing, stale, and successfully empty weeks — pin LKG and aggregate-status cases in Task 2.
+3. Owner changes and version-1 cache coverage — pin owner isolation and full-week-only fallback in Task 2.
+4. Empty-but-successful sources versus sources that have never succeeded — pin both coordinator outages and entity availability in Task 4.
+5. Blank, whitespace-padded, duplicate, malformed, and wrong-domain entity IDs — pin parsing and validation in Task 5.
+
+### Task 1: Expose one normalized Lectio ISO-week page
+
+**Files:**
+- Modify: `services/lectio-gateway/src/lectio_gateway/lectio/client.py`
+- Test: `services/lectio-gateway/tests/test_lectio_adapter.py`
+
+**Interface:** Add `async def get_schedule_week(self, iso_year: int, iso_week: int) -> list[LectioLesson]`. It fetches and parses exactly one Lectio page. `get_schedule(start, end)` remains as a range convenience method and composes these page results before applying its current overlap filter.
+
+- [x] Add `test_client_fetches_single_schedule_iso_week`, asserting the requested ISO year/week is used once and the fixture returns normalized `LectioLesson` objects.
+- [x] Run `python -m pytest -q services/lectio-gateway/tests/test_lectio_adapter.py -k single_schedule_iso_week`; confirm it fails because the single-week interface is missing.
+- [x] Implement the async single-week adapter using the existing `_fetch_schedule_html` and `parse_schedule_html` boundary; make range schedule fetching reuse it.
+- [x] Run the focused adapter test and the full adapter suite; require both to pass.
+- [x] Commit the adapter interface and its tests as one independently reviewable change.
+
+### Task 2: Add the owner-scoped weekly schedule cache and safe legacy fallback
+
+**Files:**
+- Modify: `services/lectio-gateway/src/lectio_gateway/data_service.py`
+- Test: `services/lectio-gateway/tests/test_data_service.py`
+
+**Interfaces:** Keep `LectioDataService.get_source(source, start, end)` unchanged for API callers. Add `_get_schedule_range(session, client_or_none, start, end)` to resolve and aggregate pages; `client_or_none` permits client-construction failures to use a last-known-good page. Add internal page fetch/cache helpers keyed by `(owner_hmac, iso_year, iso_week)`, with a distinct lock per key. Persist `_ScheduleWeekEntry` values separately from exact-range entries.
+
+- [x] Add failing tests `test_schedule_pages_are_reused_across_minute_shifted_ranges`, `test_concurrent_requests_share_one_schedule_week_fetch`, `test_week_cache_is_isolated_by_owner`, `test_successfully_empty_week_is_reused_after_range_shift`, and `test_failed_week_refresh_uses_lkg_for_a_shifted_range`.
+- [x] Add `test_legacy_range_entry_is_fallback_only_when_it_covers_full_week`, `test_week_resolution_uses_copenhagen_bounds_across_dst`, and `test_week_resolution_crosses_iso_year_boundary`; verify a partial legacy range is never returned as a complete page.
+- [x] Run the focused new data-service cases and record the expected failures before implementation.
+- [x] Implement cache version 2 with per-week TTL, LKG, owner/week locks, pruning, and persistence. Continue reading version 1 range entries only as full-week fallback; do not promote partial legacy results.
+- [x] Resolve required weeks using Copenhagen local dates and filter composed schedule lessons to the caller's original half-open `[start, end)` range. An empty page with a successful status is a cache hit, not a miss.
+- [x] Aggregate sync as `valid` only when all required pages are fresh; report `stale` when any usable page is stale or any page is missing while other requested pages are usable; return an error only when no requested week has usable data. Set aggregate `last_attempt_at` to the newest attempt and `last_successful_sync` to the oldest available successful-page timestamp.
+- [x] Run all `services/lectio-gateway/tests/test_data_service.py`; require owner isolation, concurrent single-fetch, full-week fallback, empty-week, DST, and LKG cases to pass.
+- [x] Commit the weekly cache and persistence migration after the focused suite passes.
+
+Task 2 test coverage also includes `test_client_factory_failure_keeps_week_lkg`, added after code inspection found that a Lectio client factory exception bypassed the existing weekly cache fallback path.
+
+### Task 3: Share schedule pages across endpoints and canonicalize daily ranges
+
+**Files:**
+- Modify: `services/lectio-gateway/src/lectio_gateway/data_service.py`
+- Modify: `services/lectio-gateway/src/lectio_gateway/lectio/client.py`
+- Test: `services/lectio-gateway/tests/test_data_service.py`
+- Test: `services/lectio-gateway/tests/test_gateway_api.py`
+- Test: `services/lectio-gateway/tests/test_lectio_adapter.py`
+
+**Interfaces:** Refactor homework to `async def get_homework(self, start: datetime, end: datetime, *, lessons: Sequence[LectioLesson]) -> list[LectioHomework]` and cancellation derivation to `async def get_cancellations(self, lessons: Sequence[LectioLesson]) -> list[LectioCancellation]`. Neither method fetches schedule. `LectioDataService.get_source` calls `_get_schedule_range(...)` from Task 2 and passes those lessons into both operations.
+
+- [ ] Add failing tests `test_homework_and_cancellations_reuse_schedule_week_pages`, `test_homework_sync_is_stale_when_schedule_dependency_is_stale`, and API coverage proving public item shape and schedule half-open filtering remain unchanged.
+- [ ] Add failing tests `test_assignments_ranges_are_day_aligned_in_copenhagen` and `test_homework_ranges_are_day_aligned_in_copenhagen`; cover an already-aligned exclusive end and a range crossing the DST offset change.
+- [ ] Run the focused adapter, data-service, and gateway API cases to confirm the old independent schedule calls and exact-minute range keys violate the assertions.
+- [ ] Make `assignments` and `homework` fetch/cache keys use local-midnight start and exclusive next-midnight end, preserving that day-aligned range for the upstream call.
+- [ ] Route schedule through the week store; route homework through the day cache plus the same shared schedule pages; derive cancellations from those pages and reuse the schedule freshness status. Preserve generic sanitized error behavior and the existing API envelope.
+- [ ] Run all gateway tests with `python -m pytest -q services/lectio-gateway/tests`; require all routes, cache, adapter, and auth regressions to pass.
+- [ ] Commit endpoint composition and day-range canonicalization after the gateway suite passes.
+
+### Task 4: Keep HA entities available after a later poll failure
+
+**Files:**
+- Modify: `home-assistant/custom_components/better_lectio/coordinator.py`
+- Modify: `home-assistant/custom_components/better_lectio/calendar.py`
+- Modify: `home-assistant/custom_components/better_lectio/todo.py`
+- Modify: `home-assistant/custom_components/better_lectio/sensor.py`
+- Test: `home-assistant/tests/test_coordinator.py`
+- Test: `home-assistant/tests/test_entities.py`
+
+**Interfaces:** Track successful category responses independently of their item count and expose coordinator predicates `has_source_succeeded(source: str) -> bool`, `has_gateway_status -> bool`, and `has_any_source_succeeded -> bool`.
+
+- [ ] Add failing tests for a previously successful source remaining available after a category failure and a gateway-status failure; assert its items, `last_successful_sync`, and stale diagnostics remain present.
+- [ ] Add tests that a successful empty category is available after a later failure, a never-successful category stays unavailable, session status is available only after a gateway-status success, and last-sync is available only after any data-source success.
+- [ ] Run `python -m pytest -q home-assistant/tests/test_coordinator.py home-assistant/tests/test_entities.py`; confirm the latest-update-based availability assertions fail.
+- [ ] Add coordinator success-history flags updated only by successful status/category responses; use those flags to mark failure metadata stale even when the successful item list is empty.
+- [ ] Change calendar, todo, cancellation, session-status, and last-sync `available` properties to use the matching source-history predicates. Keep the most recent poll result and per-source errors in existing sync attributes.
+- [ ] Run the entire HA suite with `python -m pytest -q home-assistant/tests`; require source isolation, valid-empty, first-failure, and reconnect cases to pass.
+- [ ] Commit the HA availability behavior after the HA suite passes.
+
+### Task 5: Configure display entity IDs as typed semantic roles
+
+**Files:**
+- Create: `services/display-service/src/display_service/entity_config.py`
+- Modify: `services/display-service/src/display_service/model_service.py`
+- Modify: `services/display-service/src/display_service/model_builder.py`
+- Modify: `services/display-service/src/display_service/main.py`
+- Modify: `docker-compose.yml`
+- Modify: `.env.example`
+- Create/Test: `services/display-service/tests/test_entity_config.py`
+- Test: `services/display-service/tests/test_display_model_service.py`
+- Test: `tests/test_compose_scaffold.py`
+- Test: `tests/test_environment_template.py`
+
+**Interface:** Add frozen `HomeAssistantEntityConfig` with defaults `calendar.lectio`, `("calendar.private",)`, `todo.lectio_assignments`, `todo.lectio_homework`, and `sensor.lectio_cancellations`, plus `from_env(environ: Mapping[str, str])`. Parse `HA_PRIVATE_CALENDARS` as a trimmed comma-separated tuple; missing means default, explicit blank means empty. Validate each role's domain/entity syntax and reject duplicate IDs. Inject the config into `DisplayModelService` at startup.
+
+- [ ] Add failing config tests for defaults, custom values, two private calendars, blank private-calendar disable, whitespace trimming, wrong domains, malformed IDs, and duplicates.
+- [ ] Add failing model-service tests proving all configured IDs are queried, private events retain semantic `private` source, and sidebar `source` values are semantic role names (`assignments`, `homework`, and `cancellations`) rather than HA entity IDs.
+- [ ] Add failing Compose/template assertions for the five override variables and defaults.
+- [ ] Run the focused display/config/scaffold tests and confirm they fail before adding the config object and injection.
+- [ ] Implement the pure config parser and pass the object through `main.py`/`DisplayBackend` to `DisplayModelService`; validate before the first HA poll. Keep `HomeAssistantClient`'s request-time domain validation as defense in depth.
+- [ ] Replace model-builder entity constants with values from the injected role config; keep event `source` values semantic and keep actual HA IDs only for client queries and source-specific diagnostic keys.
+- [ ] Add all five `${HA_*}` values to the `display-service` Compose environment and `.env.example`; test empty `HA_PRIVATE_CALENDARS` handling.
+- [ ] Run `python -m pytest -q services/display-service/tests/test_entity_config.py services/display-service/tests/test_display_model_service.py tests/test_compose_scaffold.py tests/test_environment_template.py`; require custom IDs and defaults to pass.
+- [ ] Commit entity-role configuration and its focused tests after the focused suite passes.
+
+### Task 6: Run integrated verification, push, and refresh the running container
+
+**Files:** all files changed in Tasks 1–5; no additional application files expected.
+
+- [ ] Run the full repository Python suite: `python -m pytest -q tests services/lectio-gateway/tests services/lectio-auth-browser/tests services/lectio-auth-lifecycle/tests services/display-service/tests`.
+- [ ] Run the full HA suite: `python -m pytest -q home-assistant/tests`.
+- [ ] Run repository Ruff and HA Ruff checks, `docker compose config --quiet`, and `git diff --check`; inspect the complete diff for scope drift and accidental secret exposure.
+- [ ] Resolve any failure in its owning task, rerun the relevant focused check, then repeat the complete verification set.
+- [ ] Commit the completed feature to `main`, push to `origin/main`, and verify the remote ref matches local `HEAD`.
+- [ ] Rebuild and recreate the Compose services from that commit. Confirm the gateway, display service, and other default services are healthy; call their health endpoints and verify the running gateway/display code matches the committed image/source. Do not claim live HA data validation unless configured HA is actually reachable.
+
+### Plan self-review
+
+- **Spec coverage:** Tasks 1–3 implement weekly caching, shared dependencies, daily alignment, legacy fallback, stale aggregation, and unchanged API contracts. Task 4 implements the three availability states with per-source isolation. Task 5 implements role configuration, defaults, multi-calendar parsing, validation, and Compose wiring. Task 6 covers full verification, push, and running-container refresh.
+- **Step scan:** Each implementation task has a failing-test step, observed-failure step, focused implementation, passing verification, and a commit. The only ordered dependency is gateway Task 1 → Task 2 → Task 3; HA and display tasks are independent tracks.
+- **Type consistency:** The adapter page method returns `list[LectioLesson]`; shared cache helpers store the same normalized model. Homework/cancellation consume lesson sequences. Coordinator availability predicates are source string, gateway status, and any-source success. Display configuration passes typed IDs to the model service.
+- **Review focus:** All five cases above map to tests in their owning tasks. No live-system behavior is asserted by fixture tests.
+- **Proportion:** The plan adds named tests, interfaces, commands, files, and ordering decisions only; implementation bodies remain delegated to the implementation steps.
+
+### How it went
+
+- The approved spec is now self-reviewed and the execution plan is recorded in the canonical plan log. No application code edits or feature tests have been run; the worktree changes are limited to the spec and this canonical log.
+- Native execution is recommended because the weekly cache/adapter/data-service interface must be coordinated across three gateway tasks, while the HA and display tracks can then be integrated and verified locally in one pass.
+
+### Execution approval and pre-flight rulings
+
+- The user approved execution natively and explicitly instructed not to ask for another approval in this pass. The user previously authorized pushing completed changes to `origin/main` and updating the running container; Task 6 carries that authorization forward.
+- Pre-flight interface check: Task 1 produces `LectioClient.get_schedule_week(iso_year, iso_week) -> list[LectioLesson]`, consumed by Task 2's per-week fetch helper. Task 2 produces `_get_schedule_range(session, client, start, end) -> (lessons, LectioSyncStatus)`, consumed by Task 3 for schedule, homework, and cancellations. The types align with `get_source`'s existing session/client objects and the adapter's Pydantic lesson model.
+- Ruling: Work in the current `main` checkout — the user approved native execution and previously requested the final push to `origin/main`; creating a separate worktree would require another approval or duplicate the already-approved plan/spec edits. Cost if wrong: code edits are in the shared checkout, so an accidental change could affect the user's working tree; mitigate through the narrow file list, test-first edits, diff review, and commit boundaries.
+- Ruling: Use `IMPLEMENTATION_PLAN.md` as the execution ledger and mark its task checkboxes — repository `AGENTS.md` requires this as the single progress/evidence log and prohibits separate scratch/progress Markdown. Cost if wrong: the skill's standalone ledger helpers cannot record task state; maintain each completion entry and evidence directly here.
+
+### Execution evidence
+
+- Baseline under the host default Python 3.11 failed during collection because project dependencies and Home Assistant were not installed. The CI-matched Python 3.12 container then passed `make test` and `make lint`; the Python 3.14 container passed the HA suite (`23 passed`, five upstream deprecation warnings) and the HA Ruff check. An initial Python 3.14 container attempt stopped at `make: not found` before tests; rerunning pytest and Ruff directly succeeded.
+- Task 1 completed RED→GREEN. The new adapter test failed before implementation with the expected missing `get_schedule_week` attribute, then passed after the method was added. Focused test: `1 passed, 20 deselected`; full adapter suite: `21 passed`.
+- Task 1 commit: `908d247` (`feat: expose Lectio schedule week fetch`).
+- Task 2 RED→GREEN: eight cache/range tests failed before implementation as expected; after adding weekly page persistence and fallback, those eight passed. The additional client-factory LKG test was also verified GREEN. Full data-service suite: `21 passed`; repository `make lint` passed. A direct default Ruff invocation reported rules outside the repository's configured CI selection; the CI-matched lint command is the recorded lint result.
+
+### Next steps
+
+1. Execute Tasks 2–5 with observed RED→GREEN tests; run the complete verification set, final review, push `main`, and refresh the Compose services as specified in Task 6.

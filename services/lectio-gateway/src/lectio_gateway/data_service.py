@@ -6,10 +6,11 @@ import logging
 import os
 import secrets
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Literal
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, ValidationError
 
@@ -30,6 +31,7 @@ from lectio_gateway.lectio.models import (
 
 _LOGGER = logging.getLogger(__name__)
 _UTC = timezone.utc
+_COPENHAGEN = ZoneInfo("Europe/Copenhagen")
 _SOURCES = ("schedule", "assignments", "homework", "cancellations")
 _METHODS = {
     "schedule": "get_schedule",
@@ -43,7 +45,8 @@ _ITEM_MODELS: dict[str, type[BaseModel]] = {
     "homework": LectioHomework,
     "cancellations": LectioCancellation,
 }
-_CACHE_VERSION = 1
+_CACHE_VERSION = 2
+_LEGACY_CACHE_VERSION = 1
 _MAX_CACHE_ENTRIES = 64
 _MAX_STATUS_ENTRIES = 256
 _NO_SESSION_SCOPE = "no-session"
@@ -71,6 +74,19 @@ class _CacheEntry:
     status: LectioSyncStatus
 
 
+@dataclass(frozen=True)
+class _ScheduleWeekEntry:
+    owner: str
+    iso_year: int
+    iso_week: int
+    items: list[LectioLesson]
+    status: LectioSyncStatus
+
+    @property
+    def source(self) -> str:
+        return "schedule"
+
+
 class LectioDataService:
     """Fetches normalized Lectio sources with isolated, persistent range caches."""
 
@@ -93,8 +109,10 @@ class LectioDataService:
         self._clock = clock or (lambda: datetime.now(_UTC))
         self._on_session_expired = on_session_expired
         self._entries: dict[tuple[str, str, str, str], _CacheEntry] = {}
+        self._schedule_weeks: dict[tuple[str, int, int], _ScheduleWeekEntry] = {}
         self._statuses: dict[tuple[str, str], LectioSyncStatus] = {}
         self._locks: dict[tuple[str, str, str, str], asyncio.Lock] = {}
+        self._week_locks: dict[tuple[str, int, int], asyncio.Lock] = {}
         self._persist_lock = asyncio.Lock()
 
     async def initialize(self) -> None:
@@ -104,15 +122,22 @@ class LectioDataService:
             _LOGGER.warning("Could not load the Lectio cache ownership key")
             self._owner_key = secrets.token_bytes(32)
             self._entries = {}
+            self._schedule_weeks = {}
             self._statuses = {}
             return
         try:
-            self._entries, self._statuses = await asyncio.to_thread(self._read_cache)
+            (
+                self._entries,
+                self._statuses,
+                self._schedule_weeks,
+            ) = await asyncio.to_thread(self._read_cache)
         except (OSError, ValueError, ValidationError, TypeError, KeyError):
             _LOGGER.warning("Could not restore the Lectio data cache")
             self._entries = {}
+            self._schedule_weeks = {}
             self._statuses = {}
-        for entry in self._entries.values():
+        cached_entries = [*self._entries.values(), *self._schedule_weeks.values()]
+        for entry in cached_entries:
             status_key = (entry.source, entry.owner)
             current = self._statuses.get(status_key, LectioSyncStatus())
             attempt = entry.status.last_attempt_at
@@ -156,6 +181,34 @@ class LectioDataService:
             self._statuses[(source, owner)] = status
             await self._persist_cache()
             raise LectioStudentIdRequired("A student ID is required for this source.")
+
+        if source == "schedule":
+            active_session = self._session_provider()
+            if active_session is None:
+                status = LectioSyncStatus(
+                    state="error",
+                    last_attempt_at=self._now(),
+                    error="Lectio authentication is required.",
+                )
+                self._statuses[(source, _NO_SESSION_SCOPE)] = status
+                await self._persist_cache()
+                raise LectioAuthenticationRequired(
+                    "Lectio authentication is required."
+                )
+            if self._owner_scope(active_session) != owner:
+                raise LectioSourceUnavailable(
+                    "The Lectio session changed during this request. Try again."
+                )
+            try:
+                client = self._client_factory(active_session)
+            except Exception as exc:
+                _LOGGER.warning(
+                    "Lectio schedule client setup failed (%s)", type(exc).__name__
+                )
+                client = None
+            return await self._get_schedule_range(
+                active_session, client, start, end
+            )
 
         key = (source, owner, start.isoformat(), end.isoformat())
         lock = self._locks.setdefault(key, asyncio.Lock())
@@ -265,6 +318,215 @@ class LectioDataService:
             self._require_current_owner(owner)
             return items, status
 
+    async def _get_schedule_range(
+        self,
+        session: AuthenticatedLectioSession,
+        client: LectioClient | None,
+        start: datetime,
+        end: datetime,
+    ) -> tuple[list[LectioLesson], LectioSyncStatus]:
+        """Compose the caller's range from canonical Copenhagen ISO weeks."""
+        owner = self._owner_scope(session)
+        local_start = start.astimezone(_COPENHAGEN)
+        local_end = end.astimezone(_COPENHAGEN)
+        last_local_day = (local_end - timedelta(microseconds=1)).date()
+        week_monday = local_start.date() - timedelta(days=local_start.weekday())
+        week_keys: list[tuple[int, int]] = []
+        while week_monday <= last_local_day:
+            iso_year, iso_week, _ = week_monday.isocalendar()
+            week_keys.append((iso_year, iso_week))
+            week_monday += timedelta(days=7)
+
+        pages = await asyncio.gather(
+            *(
+                self._get_schedule_week(session, client, iso_year, iso_week)
+                for iso_year, iso_week in week_keys
+            )
+        )
+        items_by_id: dict[str, LectioLesson] = {}
+        for entry, _status in pages:
+            if entry is not None:
+                for lesson in entry.items:
+                    items_by_id[lesson.id] = lesson
+
+        usable_pages = [entry for entry, _status in pages if entry is not None]
+        status = _aggregate_schedule_status(pages, self._now())
+        self._statuses[("schedule", owner)] = status
+        await self._persist_cache()
+        if not usable_pages:
+            if status.state == "expired":
+                raise LectioAuthenticationRequired(
+                    status.error or "Lectio session expired. Please sign in again."
+                )
+            raise LectioSourceUnavailable(
+                status.error or "The Lectio schedule request failed."
+            )
+
+        filtered = [
+            lesson
+            for lesson in items_by_id.values()
+            if lesson.start < end and lesson.end > start
+        ]
+        return sorted(filtered, key=lambda lesson: lesson.start), status
+
+    async def _get_schedule_week(
+        self,
+        session: AuthenticatedLectioSession,
+        client: LectioClient | None,
+        iso_year: int,
+        iso_week: int,
+    ) -> tuple[_ScheduleWeekEntry | None, LectioSyncStatus]:
+        owner = self._owner_scope(session)
+        key = (owner, iso_year, iso_week)
+        lock = self._week_locks.setdefault(key, asyncio.Lock())
+        async with lock:
+            active_session = self._session_provider()
+            if active_session is None:
+                raise LectioAuthenticationRequired(
+                    "Lectio authentication is required."
+                )
+            if self._owner_scope(active_session) != owner:
+                raise LectioSourceUnavailable(
+                    "The Lectio session changed during this request. Try again."
+                )
+
+            now = self._now()
+            entry = self._schedule_weeks.get(key)
+            last_success = entry.status.last_successful_sync if entry else None
+            if (
+                entry is not None
+                and entry.status.state == "valid"
+                and last_success is not None
+                and (now - last_success).total_seconds() < self._ttl_seconds
+            ):
+                return entry, entry.status
+
+            fallback = entry or self._legacy_schedule_week(owner, iso_year, iso_week)
+            try:
+                if client is None:
+                    raise LectioAdapterError(
+                        "The Lectio client could not be initialized"
+                    )
+                items = await client.get_schedule_week(iso_year, iso_week)
+                if not isinstance(items, list) or any(
+                    not isinstance(item, LectioLesson) for item in items
+                ):
+                    raise LectioResponseChanged(
+                        "Lectio adapter returned an invalid schedule-week result"
+                    )
+                self._require_current_owner(owner)
+            except LectioSourceUnavailable:
+                raise
+            except LectioSessionExpired:
+                self._require_current_owner(owner)
+                if self._on_session_expired is not None:
+                    self._on_session_expired()
+                status = self._schedule_week_failure(
+                    fallback,
+                    now,
+                    state="expired",
+                    error="Lectio session expired. Please sign in again.",
+                )
+            except LectioResponseChanged:
+                self._require_current_owner(owner)
+                status = self._schedule_week_failure(
+                    fallback,
+                    now,
+                    state="stale" if fallback is not None else "error",
+                    error="Lectio returned a response the gateway could not read.",
+                )
+            except LectioAdapterError:
+                self._require_current_owner(owner)
+                status = self._schedule_week_failure(
+                    fallback,
+                    now,
+                    state="stale" if fallback is not None else "error",
+                    error="The Lectio schedule request failed.",
+                )
+            except Exception as exc:
+                self._require_current_owner(owner)
+                _LOGGER.warning(
+                    "Lectio schedule week request failed (%s)", type(exc).__name__
+                )
+                status = self._schedule_week_failure(
+                    fallback,
+                    now,
+                    state="stale" if fallback is not None else "error",
+                    error="The Lectio schedule request failed.",
+                )
+            else:
+                status = LectioSyncStatus(
+                    state="valid",
+                    last_attempt_at=now,
+                    last_successful_sync=now,
+                    is_stale=False,
+                )
+                entry = _ScheduleWeekEntry(
+                    owner, iso_year, iso_week, items, status
+                )
+                self._schedule_weeks[key] = entry
+                self._prune_cache()
+                await self._persist_cache()
+                self._require_current_owner(owner)
+                return entry, status
+
+            if entry is not None:
+                entry = _ScheduleWeekEntry(
+                    owner, iso_year, iso_week, entry.items, status
+                )
+                self._schedule_weeks[key] = entry
+            self._statuses[("schedule", owner)] = status
+            await self._persist_cache()
+            if fallback is not None:
+                return (
+                    _ScheduleWeekEntry(
+                        owner, iso_year, iso_week, fallback.items, status
+                    ),
+                    status,
+                )
+            return None, status
+
+    def _legacy_schedule_week(
+        self, owner: str, iso_year: int, iso_week: int
+    ) -> _ScheduleWeekEntry | None:
+        week_start, week_end = _iso_week_bounds_utc(iso_year, iso_week)
+        candidates = [
+            entry
+            for entry in self._entries.values()
+            if entry.source == "schedule"
+            and entry.owner == owner
+            and entry.start <= week_start
+            and entry.end >= week_end
+        ]
+        if not candidates:
+            return None
+        legacy = max(
+            candidates,
+            key=lambda entry: entry.status.last_successful_sync
+            or datetime.min.replace(tzinfo=_UTC),
+        )
+        return _ScheduleWeekEntry(
+            owner, iso_year, iso_week, legacy.items, legacy.status
+        )
+
+    @staticmethod
+    def _schedule_week_failure(
+        fallback: _ScheduleWeekEntry | None,
+        now: datetime,
+        *,
+        state: Literal["stale", "expired", "error"],
+        error: str,
+    ) -> LectioSyncStatus:
+        return LectioSyncStatus(
+            state=state,
+            last_attempt_at=now,
+            last_successful_sync=(
+                fallback.status.last_successful_sync if fallback is not None else None
+            ),
+            is_stale=fallback is not None,
+            error=error,
+        )
+
     async def _record_failure(
         self,
         key: tuple[str, str, str, str],
@@ -325,6 +587,16 @@ class LectioDataService:
                     "status": entry.status.model_dump(mode="json"),
                 }
             )
+        schedule_weeks = [
+            {
+                "owner": entry.owner,
+                "iso_year": entry.iso_year,
+                "iso_week": entry.iso_week,
+                "items": [item.model_dump(mode="json") for item in entry.items],
+                "status": entry.status.model_dump(mode="json"),
+            }
+            for entry in self._schedule_weeks.values()
+        ]
         statuses = [
             {
                 "source": source,
@@ -334,7 +606,12 @@ class LectioDataService:
             for (source, owner), status in self._statuses.items()
         ]
         return json.dumps(
-            {"version": _CACHE_VERSION, "entries": entries, "statuses": statuses},
+            {
+                "version": _CACHE_VERSION,
+                "entries": entries,
+                "schedule_weeks": schedule_weeks,
+                "statuses": statuses,
+            },
             ensure_ascii=False,
             separators=(",", ":"),
         )
@@ -344,11 +621,13 @@ class LectioDataService:
     ) -> tuple[
         dict[tuple[str, str, str, str], _CacheEntry],
         dict[tuple[str, str], LectioSyncStatus],
+        dict[tuple[str, int, int], _ScheduleWeekEntry],
     ]:
         if not self._cache_path.exists():
-            return {}, {}
+            return {}, {}, {}
         payload = json.loads(self._cache_path.read_text(encoding="utf-8"))
-        if payload.get("version") != _CACHE_VERSION or not isinstance(
+        version = payload.get("version")
+        if version not in {_LEGACY_CACHE_VERSION, _CACHE_VERSION} or not isinstance(
             payload.get("entries"), list
         ):
             raise ValueError("Unsupported Lectio cache format")
@@ -364,6 +643,21 @@ class LectioDataService:
             items = [_ITEM_MODELS[source].model_validate(item) for item in raw["items"]]
             key = (source, owner, start.isoformat(), end.isoformat())
             entries[key] = _CacheEntry(source, owner, start, end, items, status)
+        schedule_weeks: dict[tuple[str, int, int], _ScheduleWeekEntry] = {}
+        raw_schedule_weeks = payload.get("schedule_weeks", [])
+        if not isinstance(raw_schedule_weeks, list):
+            raise ValueError("Invalid cached schedule weeks")
+        for raw in raw_schedule_weeks:
+            owner = raw["owner"]
+            iso_year = raw["iso_year"]
+            iso_week = raw["iso_week"]
+            _iso_week_bounds_utc(iso_year, iso_week)
+            status = LectioSyncStatus.model_validate(raw["status"])
+            items = [LectioLesson.model_validate(item) for item in raw["items"]]
+            key = (owner, iso_year, iso_week)
+            schedule_weeks[key] = _ScheduleWeekEntry(
+                owner, iso_year, iso_week, items, status
+            )
         statuses = {}
         for raw in payload.get("statuses", []):
             source = raw["source"]
@@ -371,7 +665,7 @@ class LectioDataService:
                 raise ValueError("Unknown cached Lectio source status")
             owner = raw["owner"]
             statuses[(source, owner)] = LectioSyncStatus.model_validate(raw["status"])
-        return entries, statuses
+        return entries, statuses, schedule_weeks
 
     def _owner_scope(self, session: AuthenticatedLectioSession) -> str:
         if self._owner_key is None:
@@ -447,6 +741,16 @@ class LectioDataService:
             )
             for key, _entry in ordered[: len(self._entries) - _MAX_CACHE_ENTRIES]:
                 del self._entries[key]
+        if len(self._schedule_weeks) > _MAX_CACHE_ENTRIES:
+            ordered_weeks = sorted(
+                self._schedule_weeks.items(),
+                key=lambda pair: pair[1].status.last_attempt_at
+                or datetime.min.replace(tzinfo=_UTC),
+            )
+            for key, _entry in ordered_weeks[
+                : len(self._schedule_weeks) - _MAX_CACHE_ENTRIES
+            ]:
+                del self._schedule_weeks[key]
         if len(self._statuses) > _MAX_STATUS_ENTRIES:
             ordered_statuses = sorted(
                 self._statuses.items(),
@@ -475,3 +779,67 @@ class LectioDataService:
         ):
             raise ValueError("Range must contain ordered timezone-aware datetimes")
         return start.astimezone(_UTC), end.astimezone(_UTC)
+
+
+def _iso_week_bounds_utc(iso_year: int, iso_week: int) -> tuple[datetime, datetime]:
+    monday = date.fromisocalendar(iso_year, iso_week, 1)
+    next_monday = monday + timedelta(days=7)
+    start = datetime(
+        monday.year, monday.month, monday.day, tzinfo=_COPENHAGEN
+    ).astimezone(_UTC)
+    end = datetime(
+        next_monday.year,
+        next_monday.month,
+        next_monday.day,
+        tzinfo=_COPENHAGEN,
+    ).astimezone(_UTC)
+    return start, end
+
+
+def _aggregate_schedule_status(
+    pages: list[tuple[_ScheduleWeekEntry | None, LectioSyncStatus]],
+    now: datetime,
+) -> LectioSyncStatus:
+    statuses = [status for _entry, status in pages]
+    usable = [
+        (entry, status)
+        for entry, status in pages
+        if entry is not None
+    ]
+    successful_times = [
+        status.last_successful_sync
+        for _entry, status in usable
+        if status.last_successful_sync is not None
+    ]
+    attempt_times = [
+        status.last_attempt_at
+        for status in statuses
+        if status.last_attempt_at is not None
+    ]
+    expired = any(status.state == "expired" for status in statuses)
+    complete_and_fresh = len(usable) == len(pages) and all(
+        status.state == "valid" and not status.is_stale
+        for _entry, status in usable
+    )
+    if not usable:
+        state = "expired" if expired else "error"
+        is_stale = False
+    elif complete_and_fresh:
+        state = "valid"
+        is_stale = False
+    else:
+        state = "expired" if expired else "stale"
+        is_stale = True
+    error = None
+    if state != "valid":
+        error = next(
+            (status.error for status in statuses if status.error is not None),
+            "The Lectio schedule is incomplete.",
+        )
+    return LectioSyncStatus(
+        state=state,
+        last_attempt_at=max(attempt_times, default=now),
+        last_successful_sync=min(successful_times, default=None),
+        is_stale=is_stale,
+        error=error,
+    )
