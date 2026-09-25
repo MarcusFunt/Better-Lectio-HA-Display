@@ -2361,15 +2361,17 @@ This section is the canonical running record for agent evidence, completed work,
 - Built all Compose profile images and recreated the default services while preserving named volumes. The display service, gateway, and auth-lifecycle service are healthy; `/health` returned success for the display and gateway.
 - The running display service rendered and validated a 48,062-byte BMP using the firmware-compatible palette. The deployed `image_store.py` SHA-256 (`592137cd925c79066a52fc3edab71e2fd3b0cf2df47de650033384a608fdfd75`) matches the current source file.
 - Final Python suite passed: `117 passed in 4.38s`. Home Assistant suite passed: `23 passed` with five upstream deprecation warnings. Repository and Home Assistant Ruff checks and `docker compose config --quiet` passed.
-- `git diff --check HEAD` passed and the diff credential scan found no likely literal credentials. The palette validator, its tests, and this updated plan entry are the remaining working-tree changes for the release commit.
+- `git diff --check HEAD` passed and the staged-diff credential scan found no likely literal credentials.
+- Committed the palette validation and final handoff as `7d3e693` (`fix: validate firmware BMP palette`) and pushed it to `origin/main`. `git ls-remote origin refs/heads/main` matched local `HEAD` at `7d3e6933e0ab1fc2b6c6913112e44760bbad26fa`; the worktree is clean.
+- After the push, confirmed the running display container's `image_store.py` hash still matches committed source and `/health` still returns success. All three default Compose services are healthy.
 
 ### How it went
 
 - The renderer/API commits are already on `origin/main`; this release pass adds the firmware palette validation and corrects the weighted progress handoff after renderer completion.
 - The review's refresh-policy concern is explicitly recorded with its operational cost. No live Home Assistant request or physical e-paper display check was performed.
+- The follow-up documentation commit records the final commit, push, clean worktree, and runtime match. The progress estimate remains **about 72% complete, about 28% remaining**.
 
 ### Next steps
 
-1. Commit the remaining validator, regression tests, and plan update; push `main` to `origin` and confirm remote `main` matches the resulting commit.
-2. Record that final commit and confirm the running service still uses the matching source after the push.
-3. Consider durable per-source display-model persistence during operational hardening; continue with live Home Assistant and physical display validation when available.
+1. Consider durable per-source display-model persistence during operational hardening; continue with live Home Assistant and physical display validation when available.
+2. Implement and validate the custom firmware and USB provisioning path, then complete Tailnet operations and remaining hardening.
