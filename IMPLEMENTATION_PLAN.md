@@ -2417,15 +2417,16 @@ This section is the canonical running record for agent evidence, completed work,
 - Updated `/auth/browser` with source freshness rows and a timestamp/hash-labelled 800×480 bitmap preview that refreshes when its content hash changes. It reports clearly when no bitmap exists.
 - Added redaction, unavailable-image, read-only storage, current-revision refresh, preview-route, page, and Compose-boundary tests.
 - The added tests first failed on the missing diagnostic app/routes/UI/Compose service. In the supported Python 3.12 environment, the focused changed-scope suite passed (`16 passed`). The final repository Python suite passed (`123 passed in 4.16s`) and selected Ruff checks passed.
+- Committed the implementation as `d9c3fb0` (`feat: add login-page diagnostics and bitmap preview`) and pushed it to `origin/main`; `git ls-remote` matched local `HEAD` at `d9c3fb0aeb0367b28e206efaac2c1a2b281cd142`.
+- After the push, ran `docker compose up --build --detach --force-recreate`. Gateway, display service, internal diagnostics service, and auth-lifecycle service all reported healthy. The post-restart `/auth/browser` request returned HTTP 200, and `/auth/diagnostics` returned `AUTHENTICATED` with valid schedule and assignment source states.
 
 ### How it went
 
-- `docker compose config --quiet` and `git diff --check` passed. The gateway and display images built, then the default Compose services were force-recreated and reported healthy.
-- A live request to `/auth/browser` returned HTTP 200 and included both diagnostics sections. `/auth/diagnostics` reported `AUTHENTICATED` and all four Lectio sources as valid. The new diagnostics container has no host port mapping.
+- `docker compose config --quiet` and `git diff --check` passed. The gateway and display images built, then the default Compose services were force-recreated before and again after the push. The diagnostics container has no host port mapping.
+- The post-push live request to `/auth/browser` returned HTTP 200 and included both diagnostics sections. `/auth/diagnostics` reported `AUTHENTICATED`; all four Lectio sources were valid in the pre-push check. The latest post-push check confirmed schedule and assignment states remained valid.
 - The live preview is currently unavailable because the running display service has no Home Assistant URL/token and has not rendered a bitmap. The sidecar tests served a real validated BMP from a temporary image store; the gateway proxy test used a fake diagnostics client. No live Home Assistant or physical display check was performed.
 - The image preview path is implemented and degrades to a clear no-bitmap state. Actual display rendering remains dependent on configuring Home Assistant.
 
 ### Next steps
 
-1. Commit and push the task to `origin/main`, then rebuild and restart the default Compose checkout from the pushed revision and confirm runtime health.
-2. After Home Assistant is configured and has produced an image, open the local login page and verify the live bitmap preview.
+1. After Home Assistant is configured and has produced an image, open the local login page and verify the live bitmap preview.
