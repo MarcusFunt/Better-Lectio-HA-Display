@@ -2,6 +2,7 @@ import asyncio
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+from display_service.entity_config import HomeAssistantEntityConfig
 from display_service.model_service import DisplayModelService
 
 TZ = ZoneInfo("Europe/Copenhagen")
@@ -85,7 +86,9 @@ def test_model_service_fetches_configured_entities_for_copenhagen_window():
         client = FakeHomeAssistantClient()
         service = DisplayModelService(
             client,
-            private_calendar_entity_ids=("calendar.private", "calendar.family"),
+            entity_config=HomeAssistantEntityConfig(
+                private_calendar_entity_ids=("calendar.private", "calendar.family")
+            ),
         )
 
         result = await service.async_build(
@@ -116,7 +119,12 @@ def test_model_service_fetches_configured_entities_for_copenhagen_window():
 def test_source_failure_keeps_only_that_sources_last_good_data():
     async def run():
         client = FakeHomeAssistantClient()
-        service = DisplayModelService(client, private_calendar_entity_ids=("calendar.private",))
+        service = DisplayModelService(
+            client,
+            entity_config=HomeAssistantEntityConfig(
+                private_calendar_entity_ids=("calendar.private",)
+            ),
+        )
         now = datetime(2026, 9, 25, 7, 0, tzinfo=TZ)
         first = await service.async_build(now=now)
         client.calendar_events["calendar.lectio"] = [
@@ -149,7 +157,9 @@ def test_first_fetch_failure_isolated_and_reports_no_stale_cache():
     async def run():
         client = FakeHomeAssistantClient()
         client.fail.add("sensor.lectio_cancellations")
-        service = DisplayModelService(client, private_calendar_entity_ids=())
+        service = DisplayModelService(
+            client, entity_config=HomeAssistantEntityConfig(private_calendar_entity_ids=())
+        )
 
         result = await service.async_build(
             now=datetime(2026, 9, 25, 7, 0, tzinfo=TZ)
@@ -170,7 +180,9 @@ def test_model_service_preserves_home_assistant_lectio_sync_freshness():
             "is_stale": True,
             "last_successful_sync": "2026-09-24T14:00:00+02:00",
         }
-        service = DisplayModelService(client, private_calendar_entity_ids=())
+        service = DisplayModelService(
+            client, entity_config=HomeAssistantEntityConfig(private_calendar_entity_ids=())
+        )
 
         result = await service.async_build(
             now=datetime(2026, 9, 25, 7, 0, tzinfo=TZ)
@@ -185,3 +197,66 @@ def test_model_service_preserves_home_assistant_lectio_sync_freshness():
         assert result.model.days[0].events[0].title == "Math"
 
     asyncio.run(run())
+
+
+def test_model_service_uses_custom_entity_ids_and_semantic_sidebar_roles():
+    async def run():
+        client = FakeHomeAssistantClient()
+        config = HomeAssistantEntityConfig(
+            lectio_calendar_entity_id="calendar.school",
+            private_calendar_entity_ids=("calendar.marcus", "calendar.family"),
+            assignments_entity_id="todo.school_assignments",
+            homework_entity_id="todo.school_homework",
+            cancellations_entity_id="sensor.school_changes",
+        )
+        client.calendar_events.update(
+            {
+                "calendar.school": client.calendar_events["calendar.lectio"],
+                "calendar.marcus": client.calendar_events["calendar.private"],
+            }
+        )
+        client.todo_items.update(
+            {
+                "todo.school_assignments": client.todo_items[
+                    "todo.lectio_assignments"
+                ],
+                "todo.school_homework": client.todo_items["todo.lectio_homework"],
+            }
+        )
+        client.sync_status.update(
+            {
+                "calendar.school": client.sync_status["calendar.lectio"],
+                "todo.school_assignments": client.sync_status[
+                    "todo.lectio_assignments"
+                ],
+                "todo.school_homework": client.sync_status["todo.lectio_homework"],
+                "sensor.school_changes": client.sync_status[
+                    "sensor.lectio_cancellations"
+                ],
+            }
+        )
+        service = DisplayModelService(client, entity_config=config)
+        result = await service.async_build(
+            now=datetime(2026, 9, 25, 7, 0, tzinfo=TZ)
+        )
+        return client, result
+
+    client, result = asyncio.run(run())
+    requested_ids = {call[1] for call in client.calls if call[0] != "sync"}
+    expected_ids = {
+        "calendar.school",
+        "calendar.marcus",
+        "calendar.family",
+        "todo.school_assignments",
+        "todo.school_homework",
+        "sensor.school_changes",
+    }
+
+    assert requested_ids == expected_ids
+    assert set(result.sources) == expected_ids
+    assert {event.source for event in result.model.days[0].events} == {
+        "lectio",
+        "private",
+    }
+    sidebar_roles = {item.source for item in result.model.sidebar}
+    assert sidebar_roles == {"assignments", "homework", "cancellations"}

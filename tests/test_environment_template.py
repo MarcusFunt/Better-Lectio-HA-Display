@@ -19,3 +19,19 @@ def test_environment_template_leaves_home_assistant_token_empty():
     }
 
     assert values["HOME_ASSISTANT_TOKEN"] == ""
+
+
+def test_environment_template_documents_home_assistant_entity_roles():
+    template = Path(__file__).resolve().parents[1].joinpath(".env.example").read_text()
+    values = {
+        key: value
+        for line in template.splitlines()
+        if line.strip() and not line.lstrip().startswith("#") and "=" in line
+        for key, value in [line.split("=", maxsplit=1)]
+    }
+
+    assert values["HA_LECTIO_CALENDAR"] == "calendar.lectio"
+    assert values["HA_PRIVATE_CALENDARS"] == "calendar.private"
+    assert values["HA_ASSIGNMENTS_TODO"] == "todo.lectio_assignments"
+    assert values["HA_HOMEWORK_TODO"] == "todo.lectio_homework"
+    assert values["HA_CANCELLATIONS_SENSOR"] == "sensor.lectio_cancellations"

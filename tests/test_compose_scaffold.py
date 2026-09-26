@@ -85,3 +85,25 @@ def test_auth_endpoints_stay_on_loopback_and_display_port_is_configurable():
             continue
         for binding in service.get("ports", []):
             assert binding.startswith("127.0.0.1:")
+
+
+def test_display_service_exposes_home_assistant_entity_role_overrides():
+    compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text())
+    environment = compose["services"]["display-service"]["environment"]
+
+    assert {
+        key: environment[key]
+        for key in (
+            "HA_LECTIO_CALENDAR",
+            "HA_PRIVATE_CALENDARS",
+            "HA_ASSIGNMENTS_TODO",
+            "HA_HOMEWORK_TODO",
+            "HA_CANCELLATIONS_SENSOR",
+        )
+    } == {
+        "HA_LECTIO_CALENDAR": "${HA_LECTIO_CALENDAR:-calendar.lectio}",
+        "HA_PRIVATE_CALENDARS": "${HA_PRIVATE_CALENDARS-calendar.private}",
+        "HA_ASSIGNMENTS_TODO": "${HA_ASSIGNMENTS_TODO:-todo.lectio_assignments}",
+        "HA_HOMEWORK_TODO": "${HA_HOMEWORK_TODO:-todo.lectio_homework}",
+        "HA_CANCELLATIONS_SENSOR": "${HA_CANCELLATIONS_SENSOR:-sensor.lectio_cancellations}",
+    }

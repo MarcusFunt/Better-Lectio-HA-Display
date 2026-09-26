@@ -13,6 +13,7 @@ from fastapi import FastAPI, HTTPException, Request
 from starlette.responses import Response
 
 from .device_registry import DeviceRecord, DeviceRegistry
+from .entity_config import HomeAssistantEntityConfig
 from .ha_client import HomeAssistantClient
 from .image_store import DisplayImageStore
 from .model_service import DisplayModelService
@@ -25,15 +26,20 @@ _DEFAULT_REFRESH_SECONDS = 30
 class DisplayBackend:
     """Coordinate model refresh, rendering, persistent content, and devices."""
 
-    def __init__(self, data_dir: Path) -> None:
+    def __init__(
+        self,
+        data_dir: Path,
+        entity_config: HomeAssistantEntityConfig | None = None,
+    ) -> None:
         self.devices = DeviceRegistry(data_dir)
         self.images = DisplayImageStore(data_dir)
+        self._entity_config = entity_config or HomeAssistantEntityConfig()
         self._models: DisplayModelService | None = None
         self._refresh_lock = asyncio.Lock()
         self._next_refresh_at = 0.0
 
     def set_home_assistant(self, client: HomeAssistantClient) -> None:
-        self._models = DisplayModelService(client)
+        self._models = DisplayModelService(client, entity_config=self._entity_config)
 
     async def refresh_if_due(self) -> None:
         """Refresh at most once per polling interval; preserve the last good BMP."""
@@ -89,7 +95,8 @@ async def lifespan(app: FastAPI):
     data_dir = Path(
         os.getenv("DISPLAY_DATA_DIR", "/var/lib/better-lectio-display")
     )
-    backend = DisplayBackend(data_dir)
+    entity_config = HomeAssistantEntityConfig.from_env(os.environ)
+    backend = DisplayBackend(data_dir, entity_config=entity_config)
     app.state.display_backend = backend
 
     ha_url = os.getenv("HOME_ASSISTANT_URL", "").strip()

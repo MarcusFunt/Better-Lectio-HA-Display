@@ -11,10 +11,6 @@ from zoneinfo import ZoneInfo
 from .model import DisplayDay, DisplayEvent, DisplayModel, DisplayTime, SidebarItem
 
 DISPLAY_TIMEZONE = ZoneInfo("Europe/Copenhagen")
-LECTIO_CALENDAR_ENTITY_ID = "calendar.lectio"
-ASSIGNMENTS_ENTITY_ID = "todo.lectio_assignments"
-HOMEWORK_ENTITY_ID = "todo.lectio_homework"
-CANCELLATIONS_ENTITY_ID = "sensor.lectio_cancellations"
 
 
 def display_window(
@@ -182,7 +178,7 @@ def _cancellation_item(
         title=title,
         subtitle=subtitle,
         when=when,
-        source=CANCELLATIONS_ENTITY_ID,
+        source="cancellations",
     )
 
 
@@ -202,11 +198,11 @@ def _todo_sidebar_item(
     if kind == "assignment":
         subtitle = _text(item.get("subject")) or _text(item.get("description"))
         priority = 1
-        source = ASSIGNMENTS_ENTITY_ID
+        source = "assignments"
     else:
         subtitle = _text(item.get("subject")) or _text(item.get("description"))
         priority = 2
-        source = HOMEWORK_ENTITY_ID
+        source = "homework"
     return SidebarItem(
         id=f"{kind}:{uid}",
         kind=kind,  # type: ignore[arg-type]

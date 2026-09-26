@@ -2562,15 +2562,15 @@ Task 2 test coverage also includes `test_client_factory_failure_keeps_week_lkg`,
 
 **Interface:** Add frozen `HomeAssistantEntityConfig` with defaults `calendar.lectio`, `("calendar.private",)`, `todo.lectio_assignments`, `todo.lectio_homework`, and `sensor.lectio_cancellations`, plus `from_env(environ: Mapping[str, str])`. Parse `HA_PRIVATE_CALENDARS` as a trimmed comma-separated tuple; missing means default, explicit blank means empty. Validate each role's domain/entity syntax and reject duplicate IDs. Inject the config into `DisplayModelService` at startup.
 
-- [ ] Add failing config tests for defaults, custom values, two private calendars, blank private-calendar disable, whitespace trimming, wrong domains, malformed IDs, and duplicates.
-- [ ] Add failing model-service tests proving all configured IDs are queried, private events retain semantic `private` source, and sidebar `source` values are semantic role names (`assignments`, `homework`, and `cancellations`) rather than HA entity IDs.
-- [ ] Add failing Compose/template assertions for the five override variables and defaults.
-- [ ] Run the focused display/config/scaffold tests and confirm they fail before adding the config object and injection.
-- [ ] Implement the pure config parser and pass the object through `main.py`/`DisplayBackend` to `DisplayModelService`; validate before the first HA poll. Keep `HomeAssistantClient`'s request-time domain validation as defense in depth.
-- [ ] Replace model-builder entity constants with values from the injected role config; keep event `source` values semantic and keep actual HA IDs only for client queries and source-specific diagnostic keys.
-- [ ] Add all five `${HA_*}` values to the `display-service` Compose environment and `.env.example`; test empty `HA_PRIVATE_CALENDARS` handling.
-- [ ] Run `python -m pytest -q services/display-service/tests/test_entity_config.py services/display-service/tests/test_display_model_service.py tests/test_compose_scaffold.py tests/test_environment_template.py`; require custom IDs and defaults to pass.
-- [ ] Commit entity-role configuration and its focused tests after the focused suite passes.
+- [x] Add failing config tests for defaults, custom values, two private calendars, blank private-calendar disable, whitespace trimming, wrong domains, malformed IDs, and duplicates.
+- [x] Add failing model-service tests proving all configured IDs are queried, private events retain semantic `private` source, and sidebar `source` values are semantic role names (`assignments`, `homework`, and `cancellations`) rather than HA entity IDs.
+- [x] Add failing Compose/template assertions for the five override variables and defaults.
+- [x] Run the focused display/config/scaffold tests and confirm they fail before adding the config object and injection.
+- [x] Implement the pure config parser and pass the object through `main.py`/`DisplayBackend` to `DisplayModelService`; validate before the first HA poll. Keep `HomeAssistantClient`'s request-time domain validation as defense in depth.
+- [x] Replace model-builder entity constants with values from the injected role config; keep event `source` values semantic and keep actual HA IDs only for client queries and source-specific diagnostic keys.
+- [x] Add all five `${HA_*}` values to the `display-service` Compose environment and `.env.example`; use an unset-only default for `HA_PRIVATE_CALENDARS` so an explicitly empty value disables private calendars.
+- [x] Run `python -m pytest -q services/display-service/tests/test_entity_config.py services/display-service/tests/test_display_model_service.py tests/test_compose_scaffold.py tests/test_environment_template.py`; require custom IDs and defaults to pass.
+- [x] Commit entity-role configuration and its focused tests after the focused suite passes.
 
 ### Task 6: Run integrated verification, push, and refresh the running container
 
@@ -2615,6 +2615,9 @@ Task 2 test coverage also includes `test_client_factory_failure_keeps_week_lkg`,
 - Task 3 commit: `5586eb2` (`feat: share schedule cache across Lectio sources`).
 - Task 4 RED→GREEN: four new/strengthened HA regressions failed first: missing success-history predicates, entity availability tied to the latest poll, and discarded `last_successful_sync` after a category error. The coordinator now tracks category and status successes separately; category failures preserve last-success metadata and stale state even for a successfully empty list. Calendar/todo/cancellation availability uses source history, session status uses gateway-status history, and last-sync uses any source history.
 - Task 4 verification: full HA suite `26 passed` with five Home Assistant/dependency deprecation warnings; HA Ruff `--select E4,E7,E9,F,I` passed.
+- Task 4 commit: `1639141` (`fix: keep HA entities available with stale data`).
+- Task 5 RED→GREEN: initial config collection failed because `entity_config.py` was absent, and the new Compose/template checks failed because the environment keys were absent. After implementation, defaults, custom IDs, two private calendars, explicit blank private-calendar disable, whitespace trimming, domain/syntax checks, duplicates, configured model queries, semantic sidebar roles, Compose wiring, and template values all passed (focused suite `20 passed`). The repository suite passed (`150 passed`); configured `make lint` and `docker compose config --quiet` passed after removing a duplicate test definition discovered by Ruff.
+- Task 5 implementation detail: Compose uses `${HA_PRIVATE_CALENDARS-calendar.private}` (default only when unset), preserving an explicit blank so `from_env` can disable private calendars. Required entity roles keep the conventional defaults.
 
 ### Next steps
 

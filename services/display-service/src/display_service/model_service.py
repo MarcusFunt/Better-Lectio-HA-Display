@@ -7,13 +7,10 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Callable
 
+from .entity_config import HomeAssistantEntityConfig
 from .ha_client import HomeAssistantApiError, HomeAssistantClient
 from .model import DisplayModel
 from .model_builder import (
-    ASSIGNMENTS_ENTITY_ID,
-    CANCELLATIONS_ENTITY_ID,
-    HOMEWORK_ENTITY_ID,
-    LECTIO_CALENDAR_ENTITY_ID,
     build_display_model,
     display_window,
 )
@@ -44,16 +41,16 @@ class DisplayModelService:
         self,
         client: HomeAssistantClient,
         *,
-        private_calendar_entity_ids: tuple[str, ...] = ("calendar.private",),
+        entity_config: HomeAssistantEntityConfig | None = None,
         max_sidebar_items: int = 8,
     ) -> None:
         if max_sidebar_items < 0:
             raise ValueError("max_sidebar_items cannot be negative")
-        entity_ids = tuple(dict.fromkeys(private_calendar_entity_ids))
-        if LECTIO_CALENDAR_ENTITY_ID in entity_ids:
-            raise ValueError("Lectio calendar cannot also be a private calendar")
         self._client = client
-        self._private_calendar_entity_ids = entity_ids
+        self._entity_config = entity_config or HomeAssistantEntityConfig()
+        self._private_calendar_entity_ids = (
+            self._entity_config.private_calendar_entity_ids
+        )
         self._max_sidebar_items = max_sidebar_items
         self._last_good: dict[str, Any] = {}
         self._last_good_sync: dict[str, dict[str, Any]] = {}
@@ -61,18 +58,19 @@ class DisplayModelService:
     async def async_build(self, *, now: datetime | None = None) -> DisplayModelResult:
         """Fetch inputs concurrently and build a model, using per-source cache."""
         start, end, _ = display_window(now)
+        config = self._entity_config
         calls: dict[str, Callable[[], Any]] = {
-            LECTIO_CALENDAR_ENTITY_ID: lambda: self._client.async_get_calendar_events(
-                LECTIO_CALENDAR_ENTITY_ID, start, end
+            config.lectio_calendar_entity_id: lambda: self._client.async_get_calendar_events(
+                config.lectio_calendar_entity_id, start, end
             ),
-            ASSIGNMENTS_ENTITY_ID: lambda: self._client.async_get_todo_items(
-                ASSIGNMENTS_ENTITY_ID
+            config.assignments_entity_id: lambda: self._client.async_get_todo_items(
+                config.assignments_entity_id
             ),
-            HOMEWORK_ENTITY_ID: lambda: self._client.async_get_todo_items(
-                HOMEWORK_ENTITY_ID
+            config.homework_entity_id: lambda: self._client.async_get_todo_items(
+                config.homework_entity_id
             ),
-            CANCELLATIONS_ENTITY_ID: lambda: self._client.async_get_cancellations(
-                CANCELLATIONS_ENTITY_ID
+            config.cancellations_entity_id: lambda: self._client.async_get_cancellations(
+                config.cancellations_entity_id
             ),
         }
         for entity_id in self._private_calendar_entity_ids:
@@ -86,10 +84,10 @@ class DisplayModelService:
             for key in keys
             if key
             in {
-                LECTIO_CALENDAR_ENTITY_ID,
-                ASSIGNMENTS_ENTITY_ID,
-                HOMEWORK_ENTITY_ID,
-                CANCELLATIONS_ENTITY_ID,
+                config.lectio_calendar_entity_id,
+                config.assignments_entity_id,
+                config.homework_entity_id,
+                config.cancellations_entity_id,
             }
         )
         results, sync_results = await asyncio.gather(
@@ -161,11 +159,11 @@ class DisplayModelService:
         ]
         model = build_display_model(
             now=now,
-            lectio_events=values.get(LECTIO_CALENDAR_ENTITY_ID, []),
+            lectio_events=values.get(config.lectio_calendar_entity_id, []),
             private_events=private_events,
-            assignments=values.get(ASSIGNMENTS_ENTITY_ID, []),
-            homework=values.get(HOMEWORK_ENTITY_ID, []),
-            cancellations=values.get(CANCELLATIONS_ENTITY_ID, []),
+            assignments=values.get(config.assignments_entity_id, []),
+            homework=values.get(config.homework_entity_id, []),
+            cancellations=values.get(config.cancellations_entity_id, []),
             max_sidebar_items=self._max_sidebar_items,
         )
         return DisplayModelResult(model=model, sources=sources)

@@ -105,6 +105,11 @@ services:
       DISPLAY_DATA_DIR: /var/lib/better-lectio-display
       HOME_ASSISTANT_URL: ${HOME_ASSISTANT_URL:-}
       HOME_ASSISTANT_TOKEN: ${HOME_ASSISTANT_TOKEN:-}
+      HA_LECTIO_CALENDAR: ${HA_LECTIO_CALENDAR:-calendar.lectio}
+      HA_PRIVATE_CALENDARS: ${HA_PRIVATE_CALENDARS-calendar.private}
+      HA_ASSIGNMENTS_TODO: ${HA_ASSIGNMENTS_TODO:-todo.lectio_assignments}
+      HA_HOMEWORK_TODO: ${HA_HOMEWORK_TODO:-todo.lectio_homework}
+      HA_CANCELLATIONS_SENSOR: ${HA_CANCELLATIONS_SENSOR:-sensor.lectio_cancellations}
       TZ: ${TIMEZONE:-Europe/Copenhagen}
     volumes:
       - display-service-data:/var/lib/better-lectio-display
