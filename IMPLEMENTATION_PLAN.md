@@ -2897,7 +2897,7 @@ Task 2 test coverage also includes `test_client_factory_failure_keeps_week_lkg`,
 - [x] Run the repository suite, Home Assistant suite, repository/HA Ruff checks, `make validate-hacs`, and `docker compose config --quiet`.
 - [x] Build the gateway, display, and default Compose services; inspect volume mounts and container user IDs without printing secret file contents.
 - [x] Run `git diff --check`; review the complete diff for unintentional changes and secret leakage.
-- [ ] Verify startup/restart persistence and health endpoints only if the local Compose stack can be safely recreated; do not claim live HA/HACS/Tailnet/firewall or hardware validation without actually exercising it.
+- [x] Recreate the active Compose services and verify startup/health endpoints. Managed-setting persistence across a later restart remains unverified because the new HA setup volumes were empty; do not claim live HA/HACS/Tailnet/firewall or hardware validation without exercising it.
 - [x] Record actual outcomes and remaining live setup actions below, then commit the integrated code/docs/tests as one coherent change because the already-present HACS setup edits overlap these same files; do not push without explicit authorization.
 
 ### Plan self-review
@@ -2970,3 +2970,30 @@ Task 2 test coverage also includes `test_client_factory_failure_keeps_week_lkg`,
 1. On the Compose host, set a reserved LAN bind address for `lectio-ha-api` and restrict its host port to Home Assistant when those services run on different machines.
 2. Use the login-page wizard, install/configure Better Lectio through HACS and Home Assistant, then verify the live integration and display diagnostics.
 3. Recreate/restart the Compose stack and verify persisted settings only when the active deployment can be safely taken down; run the remote HACS and other deployed checks in their target environment.
+
+### 2026-09-26 — Push, merge, and refresh the local Compose stack
+
+#### Evidence and findings
+
+- Pushed `codex/home-assistant-setup-wizard` to `origin`, then fast-forwarded local `main` from `673c7f7` to the tested setup-wizard commit `ebeaaef` and pushed `main`. The feature branch remains on `origin`; the main checkout and remote were aligned at `ebeaaef` before this deployment log update.
+- The original `main` checkout contained an uncommitted architecture-doc edit that was already represented in the feature commit. It was stashed temporarily, verified present in merged `main`, and the temporary stash was removed after verification.
+- Rebuilt and brought up the default Compose project from the original `main` checkout. The running containers report that checkout as their Compose working directory. Gateway, display, diagnostics, API, and auth-lifecycle containers all report healthy; the previously absent `lectio-ha-api` is now running on `127.0.0.1:8002`.
+- HTTP checks returned `ok` from gateway (`127.0.0.1:8000/health`), display (`127.0.0.1:8001/health`), and HA API (`127.0.0.1:8002/health`). `/auth/browser` returned HTTP 200 with the wizard and reconfigure guidance. Safe setup status reports display settings and scoped API token are not yet configured, and the API bind scope is loopback.
+- The service and HA tests/lint recorded in the prior entry passed on the exact `ebeaaef` code tree merged into `main`; the merge was a fast-forward with no code changes. This follow-up changed only this progress log after deployment.
+
+#### Tasks completed
+
+- Pushed the feature branch, merged it into `main` by fast-forward, and pushed the merged `main` branch.
+- Rebuilt and recreated the running default Compose stack from the main checkout. Compose initially reused the unchanged auth-lifecycle container; after detecting its old image ID, recreated that service explicitly. All five default services are now on their built images and healthy.
+- Verified the previously uncommitted architecture text is contained in the merged `main` version, then removed the temporary preservation stash.
+
+#### How it went
+
+- The main branch and the running Compose project both use `C:\Users\marcu\OneDrive\Dokumenter\GitHub\Better-Lectio-HA-Display`. Existing named volumes were retained by `docker compose up`; no `down`, volume removal, or pruning was run.
+- The HA setup volumes were newly created and empty. The local wizard is serving, but no Home Assistant URL/token or gateway API token has been entered; no live Home Assistant, HACS, Lectio login, LAN/firewall, Tailnet, or physical display flow was exercised.
+
+#### Next steps
+
+1. If Home Assistant is on another host, set the API host bind to a reserved LAN address and restrict port `8002` to that HA host before exposing it beyond loopback.
+2. Open the login-page wizard to configure the display URL/token/entities and generate the scoped API token; install Better Lectio through HACS and add the integration in Home Assistant.
+3. Verify live HA entities, display diagnostics, and managed-config persistence in the target environment; those checks are not established by local health endpoints or fixture tests.
