@@ -2580,8 +2580,8 @@ Task 2 test coverage also includes `test_client_factory_failure_keeps_week_lkg`,
 - [x] Run the full HA suite: `python -m pytest -q home-assistant/tests`.
 - [x] Run repository Ruff and HA Ruff checks, `docker compose config --quiet`, and `git diff --check`; inspect the complete diff for scope drift and accidental secret exposure.
 - [x] Resolve any failure in its owning task, rerun the relevant focused check, then repeat the complete verification set.
-- [ ] Commit the completed feature to `main`, push to `origin/main`, and verify the remote ref matches local `HEAD`.
-- [ ] Rebuild and recreate the Compose services from that commit. Confirm the gateway, display service, and other default services are healthy; call their health endpoints and verify the running gateway/display code matches the committed image/source. Do not claim live HA data validation unless configured HA is actually reachable.
+- [x] Commit the completed feature to `main`, push to `origin/main`, and verify the remote ref matches local `HEAD`.
+- [x] Rebuild and recreate the Compose services from that commit. Confirm the gateway, display service, and other default services are healthy; call their health endpoints and verify the running gateway/display code matches the committed image/source. Do not claim live HA data validation unless configured HA is actually reachable.
 
 ### Plan self-review
 
@@ -2620,9 +2620,7 @@ Task 2 test coverage also includes `test_client_factory_failure_keeps_week_lkg`,
 
 ### Next steps
 
-1. Commit the verified exact-range schedule availability fix and the current execution evidence.
-2. Push all approved implementation commits to `origin/main`, verify the remote ref and GitHub Actions result, and address any CI failure.
-3. Rebuild/recreate the Compose services, verify health and that the running gateway/display code matches the pushed commit, then record the outcome here.
+1. The approved implementation is complete; push, CI, and Compose evidence follows in the dated execution entries below.
 
 ## 2026-09-26 — Close reviewer availability finding and complete integrated checks
 
@@ -2651,6 +2649,32 @@ Task 2 test coverage also includes `test_client_factory_failure_keeps_week_lkg`,
 
 ### Next steps
 
-1. Commit this fix and execution evidence on `main`.
-2. Push to `origin/main`, verify the remote ref, inspect GitHub Actions for the pushed SHA, and fix any failing check.
-3. Rebuild/recreate the configured Compose services and verify service health and deployed source/image identity.
+1. Push, CI, and Compose follow-up completed; see the subsequent dated execution entry for evidence.
+
+## 2026-09-26 — Push, verify GitHub CI, and refresh Compose
+
+### Evidence and findings
+
+- Committed the reviewer fix and its regression as `26cd77bd97c7968350d685672109d45b76f14c70` (`fix: mark exact-range schedule as available`) and pushed the full local `main` history to `origin/main`.
+- `git rev-parse HEAD` and `git ls-remote origin refs/heads/main` both returned `26cd77bd97c7968350d685672109d45b76f14c70` after the push.
+- GitHub Actions CI run [36204839351](https://github.com/MarcusFunt/Better-Lectio-HA-Display/actions/runs/36204839351) for that SHA completed successfully. Both `checks` and `home-assistant-integration` jobs passed, including tests/lint, Compose validation, image builds, HA tests, and HA lint. The run reported only runner/action deprecation and Ubuntu migration notices.
+- `docker compose up --build --detach` completed successfully from the pushed checkout. `docker compose ps` showed `lectio-gateway`, `display-service`, `display-diagnostics`, and `lectio-auth-lifecycle` healthy.
+- Gateway `http://127.0.0.1:8000/health` returned `{"status":"ok","service":"lectio-gateway"}`; display service `http://127.0.0.1:8001/health` returned `{"status":"ok","service":"display-service"}`. The diagnostics and auth-lifecycle health endpoints also returned `status: ok` from inside their containers.
+- SHA-256 matched between the workspace and installed package files inside the running containers for gateway `data_service.py`, display `entity_config.py`, `model_builder.py`, and `model_service.py`; the running gateway and display services therefore contain the checked-out implementation.
+- The workflow CI run and service health checks did not report the user-provided 401 credential error. No live Lectio login, Home Assistant instance, or display hardware was exercised.
+
+### Tasks completed
+
+- Pushed the approved implementation and final availability fix to `origin/main`.
+- Confirmed the pushed commit's GitHub Actions workflow passed.
+- Rebuilt and recreated the default Compose services and verified all service health plus gateway/display code hashes.
+
+### How it went
+
+- The complete repository suite passed (`150 passed`); the complete Home Assistant suite passed (`27 passed`, five upstream deprecation warnings); repository and HA Ruff checks passed; Compose configuration validation and `git diff --check` passed.
+- The current origin `main` commit and the running gateway/display source files were verified against the pushed implementation commit.
+- No application, test, or CI failures remain for this implementation. Live external-system behavior was not tested.
+
+### Next steps
+
+1. No implementation or deployment follow-up remains. The reported 401 was not reproduced by this repository's CI or local service health checks; if it persists in a separate client, trace it at the client that submitted that credential.
