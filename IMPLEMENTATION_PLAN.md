@@ -2678,3 +2678,39 @@ Task 2 test coverage also includes `test_client_factory_failure_keeps_week_lkg`,
 ### Next steps
 
 1. No implementation or deployment follow-up remains. The reported 401 was not reproduced by this repository's CI or local service health checks; if it persists in a separate client, trace it at the client that submitted that credential.
+
+## 2026-09-26 — Branch and pull request audit; integrate firmware foundation
+
+### Evidence and findings
+
+- Re-read the repository Markdown instructions and current plan before auditing branches and PRs. The clean `main` base was `8d9f278`; `origin/main` was at the same commit before these changes.
+- Enumerated local and fetched remote branches and all open PRs. The only open PRs are [#7, Home Assistant connection handoff](https://github.com/MarcusFunt/Better-Lectio-HA-Display/pull/7) and [#6, repository readiness review](https://github.com/MarcusFunt/Better-Lectio-HA-Display/pull/6). The older scaffold, adapter, workflow, and TRMNL branches have no additional actionable changes over current `main`; PRs #1–5 are already merged.
+- PR #7 contains a useful live-connection checklist, but its fixed entity-ID assumption predates the approved semantic-role configuration. I retained its useful sequence as follow-up guidance while using the configurable entity roles/defaults now on `main`; I did not merge its stale text verbatim.
+- PR #6 is a long, dated readiness snapshot whose code findings about weekly caching/shared fetching, stale Home Assistant availability, configurable entity roles, renderer acceptance, and device API coverage have since been addressed on `main`. Its remaining physical-device, provisioning, and live-HA validation gaps are preserved below as follow-up work; the stale snapshot was not merged wholesale.
+- The local `feat/custom-firmware` branch has no commits ahead of `main`, but its separate worktree held an uncommitted firmware implementation based on upstream TRMNL firmware v1.8.16, commit `76d8134a1e973f4ec7618455e3f84380b5d1845f`. The upstream GPL-3.0 license, provenance, board support, dependency locks, and project-owned Lectio sources are retained. Generated `.pio`/`builds` output and the ignored BMP scratch image were excluded.
+- The firmware client matches the current display-service contract: it requests `/device/v1/display` and `/device/v1/image/<hash>.bmp`, sends `Authorization: Bearer` and `X-Device-ID`, validates the content-addressed image path and 48,062-byte 800×480 monochrome BMP, and records the hash only after a successful panel refresh.
+- The firmware currently reads configuration only from NVS and displays a provisioning-required message when it is absent; it does not yet provide the USB provisioning flow. It has only been compiled, not flashed or tested on a physical display. It requires an `http://` URL, so deployment depends on a trusted local network until transport protection is resolved.
+- Updated the previous effort-weighted estimate by assigning Milestone 8 (firmware, weight 9%) a provisional 35% completion for the implemented and compiled foundation. Keeping the other latest milestone assumptions unchanged moves the estimate from 71.85% to **about 75% complete**, with roughly 25% remaining. This is a judgment estimate and does not count USB provisioning or hardware verification as complete.
+
+### Tasks completed
+
+- Integrated the project-owned XIAO ESP32-S3 Lectio firmware target and its licensed upstream driver/source foundation into `firmware/`.
+- Added a GitHub Actions job to compile the `lectio_s3` firmware target so future firmware changes are checked in CI.
+- Adopted the still-useful HA handoff intent from PR #7 as follow-up acceptance: install the custom integration, confirm gateway reachability from HA, verify configured semantic entity roles, configure display-service HA access, and confirm the rendered bitmap. No live HA result is claimed.
+- Left the two documentation-only PRs open because their complete snapshots are stale or redundant; no other branch contained meaningful unique changes to merge.
+
+### How it went
+
+- `platformio run -d firmware -e lectio_s3` passed in the candidate worktree in 68.99 seconds. PlatformIO reported 52,160/327,680 bytes RAM and 1,141,001/1,900,544 bytes flash. Existing upstream dependency warnings were non-fatal.
+- Rebuilt the integrated main tree with `pio run -d firmware -e lectio_s3`; it passed in 86.37 seconds with the same RAM/flash footprint. The new GitHub Actions run and push are still pending.
+- The workflow YAML parsed successfully and exposed the expected three jobs. The staged firmware snapshot has 326 paths and 87,383 inserted lines; no `.pio`, `builds`, generated BMP, or local integration-secret file is staged. A credential-pattern scan found only request-header test sources and no common high-entropy API/GitHub token prefixes.
+- `git diff --cached --check` reports existing trailing whitespace in the imported upstream snapshot. The changed workflow, plan, and project-owned Lectio sources pass a targeted whitespace check; I kept upstream files intact rather than rewriting unrelated vendor formatting.
+- `docker compose ps` showed the gateway, display service, diagnostics, and auth lifecycle containers healthy. The changes do not touch their image inputs, so no container rebuild or restart is needed for this firmware integration.
+- Firmware does not change the running service images. A successful compile is not evidence of USB provisioning, real API/network behavior, e-paper refresh, or a physical hardware flash.
+
+### Next steps
+
+1. Finish the final staged-diff review, commit and push the firmware foundation plus its CI build to `origin/main`, then confirm the GitHub Actions result and remote SHA.
+3. Implement USB provisioning against the display-service credential registry, then validate Wi-Fi, GPIO mapping, API requests, and e-paper refresh on the actual board.
+4. Complete the live Home Assistant handoff: install the custom integration, verify gateway reachability from HA and the configured semantic entity roles, configure the display-service HA URL/token, and confirm the rendered bitmap. Record the actual entity IDs and results.
+5. Decide and document the transport boundary for the device secret; firmware currently requires HTTP, so keep it on a trusted local network until transport protection is addressed.

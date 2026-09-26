@@ -1,0 +1,5 @@
+Upstream: https://github.com/usetrmnl/trmnl-firmware.git
+Release tag: v1.8.16
+Commit: 76d8134a1e973f4ec7618455e3f84380b5d1845f
+License: GPL-3.0 (see LICENSE); third-party notices remain in their upstream locations.
+Markdown documentation is omitted except the BQ27427 library license to keep the project implementation plan and architecture canonical.
