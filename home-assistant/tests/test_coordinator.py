@@ -2,6 +2,7 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 
 from custom_components.better_lectio.api import GatewayApiError
+from custom_components.better_lectio.calendar import LectioCalendar
 from custom_components.better_lectio.const import DOMAIN
 from custom_components.better_lectio.coordinator import (
     LectioDataUpdateCoordinator,
@@ -226,5 +227,36 @@ def test_calendar_range_outside_poll_window_uses_exact_gateway_query():
         assert [item["id"] for item in stale_items] == ["schedule-2"]
         assert len(api.calls) == 3
         assert coordinator.data.sources["schedule"]["state"] == "stale"
+
+    asyncio.run(run())
+
+
+def test_successful_exact_range_fetch_establishes_schedule_availability():
+    async def run():
+        hass = HomeAssistant(".")
+        api = FakeGatewayApi()
+        coordinator = LectioDataUpdateCoordinator(hass, api, make_entry())
+        calendar = LectioCalendar(make_entry(), coordinator)
+        api.failures.update(
+            {
+                "schedule": GatewayApiError(502),
+                "assignments": GatewayApiError(502),
+                "homework": GatewayApiError(502),
+                "cancellations": GatewayApiError(502),
+            }
+        )
+
+        coordinator.data = await coordinator._async_update_data()
+        assert calendar.available is False
+        assert coordinator.has_any_source_succeeded is False
+
+        api.failures.pop("schedule")
+        start = datetime(2027, 2, 1, tzinfo=timezone.utc)
+        lessons = await coordinator.async_get_schedule(start, start + timedelta(days=2))
+
+        assert [item["id"] for item in lessons] == ["schedule-1"]
+        assert calendar.available is True
+        assert coordinator.has_source_succeeded("schedule") is True
+        assert coordinator.has_any_source_succeeded is True
 
     asyncio.run(run())

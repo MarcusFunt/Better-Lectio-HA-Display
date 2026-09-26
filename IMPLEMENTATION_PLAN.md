@@ -2576,10 +2576,10 @@ Task 2 test coverage also includes `test_client_factory_failure_keeps_week_lkg`,
 
 **Files:** all files changed in Tasks 1–5; no additional application files expected.
 
-- [ ] Run the full repository Python suite: `python -m pytest -q tests services/lectio-gateway/tests services/lectio-auth-browser/tests services/lectio-auth-lifecycle/tests services/display-service/tests`.
-- [ ] Run the full HA suite: `python -m pytest -q home-assistant/tests`.
-- [ ] Run repository Ruff and HA Ruff checks, `docker compose config --quiet`, and `git diff --check`; inspect the complete diff for scope drift and accidental secret exposure.
-- [ ] Resolve any failure in its owning task, rerun the relevant focused check, then repeat the complete verification set.
+- [x] Run the full repository Python suite: `python -m pytest -q tests services/lectio-gateway/tests services/lectio-auth-browser/tests services/lectio-auth-lifecycle/tests services/display-service/tests`.
+- [x] Run the full HA suite: `python -m pytest -q home-assistant/tests`.
+- [x] Run repository Ruff and HA Ruff checks, `docker compose config --quiet`, and `git diff --check`; inspect the complete diff for scope drift and accidental secret exposure.
+- [x] Resolve any failure in its owning task, rerun the relevant focused check, then repeat the complete verification set.
 - [ ] Commit the completed feature to `main`, push to `origin/main`, and verify the remote ref matches local `HEAD`.
 - [ ] Rebuild and recreate the Compose services from that commit. Confirm the gateway, display service, and other default services are healthy; call their health endpoints and verify the running gateway/display code matches the committed image/source. Do not claim live HA data validation unless configured HA is actually reachable.
 
@@ -2593,8 +2593,7 @@ Task 2 test coverage also includes `test_client_factory_failure_keeps_week_lkg`,
 
 ### How it went
 
-- The approved spec is now self-reviewed and the execution plan is recorded in the canonical plan log. No application code edits or feature tests have been run; the worktree changes are limited to the spec and this canonical log.
-- Native execution is recommended because the weekly cache/adapter/data-service interface must be coordinated across three gateway tasks, while the HA and display tracks can then be integrated and verified locally in one pass.
+- At plan approval time, the approved spec was self-reviewed and recorded in the canonical log; implementation had not started yet. Native execution was selected to coordinate the weekly cache/adapter/data-service interface across the gateway tasks and integrate the HA and display tracks locally.
 
 ### Execution approval and pre-flight rulings
 
@@ -2621,4 +2620,37 @@ Task 2 test coverage also includes `test_client_factory_failure_keeps_week_lkg`,
 
 ### Next steps
 
-1. Execute Tasks 2–5 with observed RED→GREEN tests; run the complete verification set, final review, push `main`, and refresh the Compose services as specified in Task 6.
+1. Commit the verified exact-range schedule availability fix and the current execution evidence.
+2. Push all approved implementation commits to `origin/main`, verify the remote ref and GitHub Actions result, and address any CI failure.
+3. Rebuild/recreate the Compose services, verify health and that the running gateway/display code matches the pushed commit, then record the outcome here.
+
+## 2026-09-26 — Close reviewer availability finding and complete integrated checks
+
+### Evidence and findings
+
+- The read-only review of commits `a3a95b9..7dbab72` identified one Important edge case: a successful out-of-poll-window schedule query saved lessons and sync metadata but did not establish schedule source success history. This left the calendar unavailable after a failed initial poll, even after an exact-range fetch succeeded.
+- Confirmed against `LectioDataUpdateCoordinator.async_get_schedule`: `_source_success[SOURCE_SCHEDULE]` was set on poll responses, but not on a successful exact-range response. The flag must remain unchanged on an error response.
+- Added a regression that makes all initial data-source polls fail, verifies schedule and any-source availability remain false, then allows the exact-range schedule request and verifies `LectioCalendar.available`, `has_source_succeeded`, and `has_any_source_succeeded` become true.
+- The regression failed before the fix at the calendar availability assertion and passed after setting schedule success history only in the exact-range success branch.
+- The reviewer rechecked the fix and found no remaining actionable issues. Review was read-only; no live Lectio or Home Assistant integration was exercised.
+
+### Tasks completed
+
+- Set `_source_success[SOURCE_SCHEDULE] = True` after a successful exact-range schedule response, preserving the existing failure path.
+- Added `test_successful_exact_range_fetch_establishes_schedule_availability` in `home-assistant/tests/test_coordinator.py`.
+- Repeated the complete local verification set after fixing an import-order lint issue introduced by the test.
+
+### How it went
+
+- Full repository tests: `docker exec better-lectio-feature-tests make test` — **150 passed**.
+- Full Home Assistant tests: `docker exec better-lectio-ha-tests python -m pytest -q home-assistant/tests` — **27 passed**, with five upstream Home Assistant/dependency deprecation warnings.
+- Repository lint: `docker exec better-lectio-feature-tests make lint` — **all checks passed**.
+- Home Assistant Ruff: `docker exec better-lectio-ha-tests python -m ruff check --select E4,E7,E9,F,I home-assistant` — **all checks passed**.
+- `docker compose config --quiet` and `git diff --check` both passed. The only diff is the success-history line and its regression test; no credentials or unrelated changes are present.
+- The targeted regression was verified RED before the fix and GREEN after it. Push, GitHub Actions, and Compose refresh are still pending.
+
+### Next steps
+
+1. Commit this fix and execution evidence on `main`.
+2. Push to `origin/main`, verify the remote ref, inspect GitHub Actions for the pushed SHA, and fix any failing check.
+3. Rebuild/recreate the configured Compose services and verify service health and deployed source/image identity.

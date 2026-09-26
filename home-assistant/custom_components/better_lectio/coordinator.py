@@ -180,6 +180,7 @@ class LectioDataUpdateCoordinator(DataUpdateCoordinator[LectioData]):
                 lessons = response["items"]
                 self._last_schedule_range = (start, end, lessons)
                 self._source_status[SOURCE_SCHEDULE] = _safe_sync(response["sync"])
+                self._source_success[SOURCE_SCHEDULE] = True
                 if self.data is not None:
                     self.data.sources[SOURCE_SCHEDULE] = dict(
                         self._source_status[SOURCE_SCHEDULE]
