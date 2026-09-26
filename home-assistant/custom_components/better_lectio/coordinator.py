@@ -67,6 +67,8 @@ class LectioDataUpdateCoordinator(DataUpdateCoordinator[LectioData]):
         self._source_status: dict[str, dict[str, Any]] = {
             source: {"state": "unknown", "is_stale": False} for source in SOURCES
         }
+        self._source_success = {source: False for source in SOURCES}
+        self._has_gateway_status = False
         self._gateway_reachable = False
         self._last_schedule_range: tuple[
             datetime, datetime, list[dict[str, Any]]
@@ -89,6 +91,7 @@ class LectioDataUpdateCoordinator(DataUpdateCoordinator[LectioData]):
             raise UpdateFailed("Could not reach the Lectio Gateway.") from err
 
         self._gateway_reachable = True
+        self._has_gateway_status = True
         now = dt_util.now()
         start = now - timedelta(days=DEFAULT_RANGE_DAYS_BEFORE)
         end = now + timedelta(days=DEFAULT_RANGE_DAYS_AFTER)
@@ -111,26 +114,37 @@ class LectioDataUpdateCoordinator(DataUpdateCoordinator[LectioData]):
             fallback_sync = _safe_sync(gateway_sources.get(source))
             if isinstance(response, GatewayApiError):
                 sync_state = "expired" if response.status == 401 else "error"
+                previous = self._source_status[source]
                 self._source_status[source] = {
                     **fallback_sync,
                     "state": sync_state,
-                    "is_stale": bool(self._items[source]),
+                    "is_stale": self.has_source_succeeded(source),
+                    "last_successful_sync": (
+                        fallback_sync["last_successful_sync"]
+                        or previous.get("last_successful_sync")
+                    ),
                     "error": response.code,
                 }
                 if response.status == 401:
                     auth["state"] = "SESSION_EXPIRED"
                 continue
             if isinstance(response, Exception):
+                previous = self._source_status[source]
                 self._source_status[source] = {
                     **fallback_sync,
                     "state": "error",
-                    "is_stale": bool(self._items[source]),
+                    "is_stale": self.has_source_succeeded(source),
+                    "last_successful_sync": (
+                        fallback_sync["last_successful_sync"]
+                        or previous.get("last_successful_sync")
+                    ),
                     "error": "connection_failed",
                 }
                 continue
 
             self._items[source] = response["items"]
             self._source_status[source] = _safe_sync(response["sync"])
+            self._source_success[source] = True
 
         return LectioData(
             items={source: list(self._items[source]) for source in SOURCES},
@@ -182,11 +196,25 @@ class LectioDataUpdateCoordinator(DataUpdateCoordinator[LectioData]):
         """Whether the latest gateway status request succeeded."""
         return self._gateway_reachable
 
+    def has_source_succeeded(self, source: str) -> bool:
+        """Whether this category has returned a successful response at least once."""
+        return self._source_success.get(source, False)
+
+    @property
+    def has_gateway_status(self) -> bool:
+        """Whether gateway status has returned successfully at least once."""
+        return self._has_gateway_status
+
+    @property
+    def has_any_source_succeeded(self) -> bool:
+        """Whether any data category has returned a successful response."""
+        return any(self._source_success.values())
+
     def _mark_gateway_unreachable(self) -> None:
         """Mark previously synchronized sources stale after a gateway outage."""
         for source in SOURCES:
             previous = self._source_status[source]
-            has_good_sync = bool(previous.get("last_successful_sync"))
+            has_good_sync = self.has_source_succeeded(source)
             self._source_status[source] = {
                 **previous,
                 "state": "stale" if has_good_sync else "error",
@@ -201,6 +229,7 @@ class LectioDataUpdateCoordinator(DataUpdateCoordinator[LectioData]):
 
     def _mark_schedule_range_failure(self, *, stale: bool) -> None:
         """Record a sanitized failure from a calendar-specific range query."""
+        stale = stale or self.has_source_succeeded(SOURCE_SCHEDULE)
         previous = self._source_status[SOURCE_SCHEDULE]
         self._source_status[SOURCE_SCHEDULE] = {
             **previous,

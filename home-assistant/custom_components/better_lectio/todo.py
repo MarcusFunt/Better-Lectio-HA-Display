@@ -48,8 +48,8 @@ class _LectioTodoList(TodoListEntity):
 
     @property
     def available(self) -> bool:
-        """Keep cached to-do data unavailable when the gateway is unreachable."""
-        return self._coordinator.last_update_success
+        """Keep source data available after its first successful response."""
+        return self._coordinator.has_source_succeeded(self._source)
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:

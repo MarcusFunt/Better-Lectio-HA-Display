@@ -2538,13 +2538,13 @@ Task 2 test coverage also includes `test_client_factory_failure_keeps_week_lkg`,
 
 **Interfaces:** Track successful category responses independently of their item count and expose coordinator predicates `has_source_succeeded(source: str) -> bool`, `has_gateway_status -> bool`, and `has_any_source_succeeded -> bool`.
 
-- [ ] Add failing tests for a previously successful source remaining available after a category failure and a gateway-status failure; assert its items, `last_successful_sync`, and stale diagnostics remain present.
-- [ ] Add tests that a successful empty category is available after a later failure, a never-successful category stays unavailable, session status is available only after a gateway-status success, and last-sync is available only after any data-source success.
-- [ ] Run `python -m pytest -q home-assistant/tests/test_coordinator.py home-assistant/tests/test_entities.py`; confirm the latest-update-based availability assertions fail.
-- [ ] Add coordinator success-history flags updated only by successful status/category responses; use those flags to mark failure metadata stale even when the successful item list is empty.
-- [ ] Change calendar, todo, cancellation, session-status, and last-sync `available` properties to use the matching source-history predicates. Keep the most recent poll result and per-source errors in existing sync attributes.
-- [ ] Run the entire HA suite with `python -m pytest -q home-assistant/tests`; require source isolation, valid-empty, first-failure, and reconnect cases to pass.
-- [ ] Commit the HA availability behavior after the HA suite passes.
+- [x] Add failing tests for a previously successful source remaining available after a category failure and a gateway-status failure; assert its items, `last_successful_sync`, and stale diagnostics remain present.
+- [x] Add tests that a successful empty category is available after a later failure, a never-successful category stays unavailable, session status is available only after a gateway-status success, and last-sync is available only after any data-source success.
+- [x] Run `python -m pytest -q home-assistant/tests/test_coordinator.py home-assistant/tests/test_entities.py`; confirm the latest-update-based availability assertions fail.
+- [x] Add coordinator success-history flags updated only by successful status/category responses; use those flags to mark failure metadata stale even when the successful item list is empty.
+- [x] Change calendar, todo, cancellation, session-status, and last-sync `available` properties to use the matching source-history predicates. Keep the most recent poll result and per-source errors in existing sync attributes.
+- [x] Run the entire HA suite with `python -m pytest -q home-assistant/tests`; require source isolation, valid-empty, first-failure, and reconnect cases to pass.
+- [x] Commit the HA availability behavior after the HA suite passes.
 
 ### Task 5: Configure display entity IDs as typed semantic roles
 
@@ -2612,6 +2612,9 @@ Task 2 test coverage also includes `test_client_factory_failure_keeps_week_lkg`,
 - Task 2 commit: `32d9a5d` (`feat: cache Lectio schedule by ISO week`).
 - Task 3 RED→GREEN: the shared schedule/homework/cancellation test, stale dependency test, and both day-range tests failed against range-keyed/independent-fetch behavior; the adapter interface test failed before accepting injected lessons. Implementation now calls Lectio once per weekly cache page, passes cached lessons to homework normalization, derives cancellations locally, aligns assignments/homework queries to Copenhagen midnights, and includes dependency freshness in homework sync status. The half-open regression fixture was corrected after its first draft accidentally started a lesson at the included range boundary.
 - Task 3 verification: gateway API suite `7 passed`, adapter suite `21 passed`, and data-service suite `26 passed`. Full repository `make test`: `138 passed`; `make lint`: all configured checks passed.
+- Task 3 commit: `5586eb2` (`feat: share schedule cache across Lectio sources`).
+- Task 4 RED→GREEN: four new/strengthened HA regressions failed first: missing success-history predicates, entity availability tied to the latest poll, and discarded `last_successful_sync` after a category error. The coordinator now tracks category and status successes separately; category failures preserve last-success metadata and stale state even for a successfully empty list. Calendar/todo/cancellation availability uses source history, session status uses gateway-status history, and last-sync uses any source history.
+- Task 4 verification: full HA suite `26 passed` with five Home Assistant/dependency deprecation warnings; HA Ruff `--select E4,E7,E9,F,I` passed.
 
 ### Next steps
 

@@ -37,8 +37,8 @@ class LectioCalendar(CalendarEntity):
 
     @property
     def available(self) -> bool:
-        """Only report a current calendar when gateway polling is healthy."""
-        return self._coordinator.last_update_success
+        """Keep the last good schedule visible when a later poll fails."""
+        return self._coordinator.has_source_succeeded("schedule")
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:

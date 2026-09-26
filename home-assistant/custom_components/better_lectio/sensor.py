@@ -44,8 +44,8 @@ class _LectioSensor(SensorEntity):
 
     @property
     def available(self) -> bool:
-        """Expose current sensor state only while coordinator polling succeeds."""
-        return self._coordinator.last_update_success
+        """Keep gateway status available after its first successful response."""
+        return self._coordinator.has_gateway_status
 
     def _coordinator_updated(self) -> None:
         if self.hass is not None:
@@ -62,6 +62,11 @@ class LectioCancellationsSensor(_LectioSensor):
     _attr_name = "Lectio cancellations"
     def __init__(self, entry: ConfigEntry, coordinator: LectioDataUpdateCoordinator):
         super().__init__(entry, coordinator, "cancellations")
+
+    @property
+    def available(self) -> bool:
+        """Expose cancellation data after its first successful source response."""
+        return self._coordinator.has_source_succeeded("cancellations")
 
     @property
     def native_value(self) -> int | None:
@@ -118,6 +123,11 @@ class LectioLastSyncSensor(_LectioSensor):
 
     def __init__(self, entry: ConfigEntry, coordinator: LectioDataUpdateCoordinator):
         super().__init__(entry, coordinator, "last_sync")
+
+    @property
+    def available(self) -> bool:
+        """Expose the last successful time after any source has succeeded."""
+        return self._coordinator.has_any_source_succeeded
 
     @property
     def native_value(self) -> datetime | None:

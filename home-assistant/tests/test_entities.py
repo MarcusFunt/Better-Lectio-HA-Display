@@ -15,6 +15,7 @@ from custom_components.better_lectio.diagnostics import (
 )
 from custom_components.better_lectio.sensor import (
     LectioCancellationsSensor,
+    LectioLastSyncSensor,
     LectioSessionStatusSensor,
 )
 from custom_components.better_lectio.todo import (
@@ -30,6 +31,8 @@ class FakeCoordinator:
     def __init__(self):
         self.last_update_success = True
         self.gateway_reachable = True
+        self.successful_sources = set()
+        self.gateway_status_succeeded = False
         self.data = LectioData(
             items={
                 "schedule": [],
@@ -78,6 +81,17 @@ class FakeCoordinator:
     def async_add_listener(self, callback):
         return lambda: None
 
+    def has_source_succeeded(self, source):
+        return source in self.successful_sources
+
+    @property
+    def has_gateway_status(self):
+        return self.gateway_status_succeeded
+
+    @property
+    def has_any_source_succeeded(self):
+        return bool(self.successful_sources)
+
 
 def test_todo_entities_are_created_and_read_only():
     entry = SimpleNamespace(entry_id="entry-1")
@@ -112,6 +126,39 @@ def test_cancellation_and_session_sensors_expose_safe_structured_status():
     coordinator.gateway_reachable = False
     assert session.available is False
     assert session.extra_state_attributes["gateway_reachable"] is False
+
+
+def test_entity_availability_tracks_source_success_not_latest_poll_result():
+    entry = SimpleNamespace(entry_id="entry-1")
+    coordinator = FakeCoordinator()
+    calendar = calendar_platform.LectioCalendar(entry, coordinator)
+    assignments = LectioAssignmentsTodo(entry, coordinator)
+    homework = LectioHomeworkTodo(entry, coordinator)
+    cancellations = LectioCancellationsSensor(entry, coordinator)
+    session = LectioSessionStatusSensor(entry, coordinator)
+    last_sync = LectioLastSyncSensor(entry, coordinator)
+
+    assert not calendar.available
+    assert not assignments.available
+    assert not homework.available
+    assert not cancellations.available
+    assert not session.available
+    assert not last_sync.available
+
+    coordinator.successful_sources.add("schedule")
+    coordinator.gateway_status_succeeded = True
+    coordinator.last_update_success = False
+    assert calendar.available
+    assert session.available
+    assert last_sync.available
+    assert not assignments.available
+    assert not homework.available
+    assert not cancellations.available
+
+    coordinator.successful_sources.update({"assignments", "homework", "cancellations"})
+    assert assignments.available
+    assert homework.available
+    assert cancellations.available
 
 
 def test_diagnostics_do_not_return_gateway_url_or_config_values():
