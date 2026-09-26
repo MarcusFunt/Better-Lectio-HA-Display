@@ -1,4 +1,5 @@
 import asyncio
+import json
 from datetime import datetime, timezone
 
 from display_service.diagnostics import app
@@ -79,3 +80,58 @@ def test_internal_diagnostics_reports_when_no_bitmap_exists(tmp_path):
     assert metadata.status_code == 200
     assert metadata.json() == {"available": False, "state": "not_rendered"}
     assert image.status_code == 404
+
+
+def test_home_assistant_setup_diagnostics_allowlist_state_and_timestamp(tmp_path):
+    (tmp_path / "home-assistant-setup.json").write_text(
+        json.dumps(
+            {
+                "state": "unauthorized",
+                "last_checked_at": "2026-09-26T08:30:00+00:00",
+                "token": "private-token",
+                "url": "http://private-host:8123",
+                "entity_id": "calendar.private_name",
+            }
+        ),
+        encoding="utf-8",
+    )
+    app.state.display_data_dir = tmp_path
+
+    async def request_setup():
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            return await client.get("/diagnostics/setup")
+
+    response = asyncio.run(request_setup())
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "state": "unauthorized",
+        "last_checked_at": "2026-09-26T08:30:00+00:00",
+    }
+    assert "private-token" not in response.text
+    assert "private-host" not in response.text
+    assert "calendar.private_name" not in response.text
+
+
+def test_home_assistant_setup_diagnostics_defaults_to_unavailable(tmp_path):
+    app.state.display_data_dir = tmp_path
+
+    async def request_setup():
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            return await client.get("/diagnostics/setup")
+
+    response = asyncio.run(request_setup())
+
+    assert response.status_code == 200
+    assert response.json() == {"state": "unavailable"}
+
+    (tmp_path / "home-assistant-setup.json").write_text(
+        json.dumps({"state": ["invalid"]}), encoding="utf-8"
+    )
+    malformed = asyncio.run(request_setup())
+    assert malformed.status_code == 200
+    assert malformed.json() == {"state": "unavailable"}

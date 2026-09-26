@@ -6,9 +6,11 @@ from urllib.parse import urlsplit
 
 import voluptuous as vol
 from homeassistant import config_entries
+from homeassistant.helpers import selector
 
 from .api import GatewayApi, GatewayApiError
 from .const import (
+    CONF_API_TOKEN,
     CONF_REFRESH_INTERVAL,
     CONF_URL,
     DEFAULT_REFRESH_INTERVAL,
@@ -44,7 +46,7 @@ class LectioConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     VERSION = 1
 
     async def async_step_user(self, user_input: dict[str, str] | None = None):
-        """Ask for the gateway URL and verify it is reachable."""
+        """Ask for the gateway URL and scoped API token, then verify access."""
         errors: dict[str, str] = {}
         if user_input is not None:
             try:
@@ -52,23 +54,81 @@ class LectioConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             except ValueError:
                 errors["base"] = "invalid_url"
             else:
-                api = GatewayApi(self.hass, url)
+                api_token = user_input[CONF_API_TOKEN].strip()
+                api = GatewayApi(self.hass, url, api_token)
                 try:
                     await api.get_status()
-                except GatewayApiError:
-                    errors["base"] = "cannot_connect"
+                except GatewayApiError as err:
+                    errors["base"] = (
+                        "invalid_auth" if err.status == 401 else "cannot_connect"
+                    )
                 else:
                     await self.async_set_unique_id(url)
                     self._abort_if_unique_id_configured()
                     return self.async_create_entry(
                         title="Better Lectio",
-                        data={CONF_URL: url},
+                        data={CONF_URL: url, CONF_API_TOKEN: api_token},
                         options={CONF_REFRESH_INTERVAL: DEFAULT_REFRESH_INTERVAL},
                     )
 
         return self.async_show_form(
             step_id="user",
-            data_schema=vol.Schema({vol.Required(CONF_URL): str}),
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_URL): str,
+                    vol.Required(CONF_API_TOKEN): selector.TextSelector(
+                        selector.TextSelectorConfig(
+                            type=selector.TextSelectorType.PASSWORD
+                        )
+                    ),
+                }
+            ),
+            errors=errors,
+        )
+
+    async def async_step_reconfigure(self, user_input: dict[str, str] | None = None):
+        """Update gateway credentials without replacing the config entry."""
+        entry = self._get_reconfigure_entry()
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            try:
+                url = normalize_gateway_url(user_input[CONF_URL])
+            except ValueError:
+                errors["base"] = "invalid_url"
+            else:
+                api_token = user_input[CONF_API_TOKEN].strip()
+                api = GatewayApi(self.hass, url, api_token)
+                try:
+                    await api.get_status()
+                except GatewayApiError as err:
+                    errors["base"] = (
+                        "invalid_auth" if err.status == 401 else "cannot_connect"
+                    )
+                else:
+                    await self.async_set_unique_id(url)
+                    self._abort_if_unique_id_configured()
+                    self.hass.config_entries.async_update_entry(
+                        entry,
+                        data={CONF_URL: url, CONF_API_TOKEN: api_token},
+                        unique_id=url,
+                    )
+                    await self.hass.config_entries.async_reload(entry.entry_id)
+                    return self.async_abort(reason="reconfigure_successful")
+
+        return self.async_show_form(
+            step_id="reconfigure",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        CONF_URL, default=entry.data.get(CONF_URL, "")
+                    ): str,
+                    vol.Required(CONF_API_TOKEN): selector.TextSelector(
+                        selector.TextSelectorConfig(
+                            type=selector.TextSelectorType.PASSWORD
+                        )
+                    ),
+                }
+            ),
             errors=errors,
         )
 

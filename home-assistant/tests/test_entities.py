@@ -2,6 +2,10 @@ import asyncio
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
+from homeassistant.components.todo import TodoItemStatus
+from homeassistant.config_entries import SOURCE_USER, ConfigEntry
+from homeassistant.core import HomeAssistant
+
 from custom_components.better_lectio import calendar as calendar_platform
 from custom_components.better_lectio import sensor as sensor_platform
 from custom_components.better_lectio import todo as todo_platform
@@ -22,9 +26,6 @@ from custom_components.better_lectio.todo import (
     LectioAssignmentsTodo,
     LectioHomeworkTodo,
 )
-from homeassistant.components.todo import TodoItemStatus
-from homeassistant.config_entries import SOURCE_USER, ConfigEntry
-from homeassistant.core import HomeAssistant
 
 
 class FakeCoordinator:
@@ -178,7 +179,11 @@ def test_diagnostics_do_not_return_gateway_url_or_config_values():
                 title="Better Lectio",
                 unique_id="http://private-host:8000",
                 version=1,
-                data={"url": "http://user:secret@private-host:8000", "token": "secret"},
+                data={
+                    "url": "http://user:secret@private-host:8000",
+                    "token": "secret",
+                    "api_token": "gateway-api-secret",
+                },
             ),
         )
         entry = coordinator.config_entry
@@ -190,6 +195,7 @@ def test_diagnostics_do_not_return_gateway_url_or_config_values():
         assert result["gateway_reachable"] is True
         assert "private-host" not in repr(result)
         assert "secret" not in repr(result)
+        assert "gateway-api-secret" not in repr(result)
 
     asyncio.run(run())
 

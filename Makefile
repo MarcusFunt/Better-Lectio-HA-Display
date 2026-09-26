@@ -13,8 +13,11 @@ test:
 test-home-assistant:
 	$(PYTHON) -m pytest -q home-assistant/tests
 
+validate-hacs:
+	$(PYTHON) -m pytest -q home-assistant/tests/test_manifest.py
+
 lint:
-	$(PYTHON) -m ruff check --select E4,E7,E9,F,I services/lectio-gateway services/lectio-auth-browser services/lectio-auth-lifecycle services/display-service home-assistant tests/test_compose_scaffold.py tests/test_environment_template.py
+	$(PYTHON) -m ruff check --select E4,E7,E9,F,I services/lectio-gateway services/lectio-auth-browser services/lectio-auth-lifecycle services/display-service custom_components home-assistant tests/test_compose_scaffold.py tests/test_environment_template.py
 
 compose-config:
 	$(COMPOSE) config --quiet

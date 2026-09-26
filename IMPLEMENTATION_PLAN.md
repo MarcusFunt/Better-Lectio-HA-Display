@@ -2715,3 +2715,258 @@ Task 2 test coverage also includes `test_client_factory_failure_keeps_week_lkg`,
 1. Implement USB provisioning against the display-service credential registry, then validate Wi-Fi, GPIO mapping, API requests, and e-paper refresh on the actual board.
 2. Complete the live Home Assistant handoff: install the custom integration, verify gateway reachability from HA and the configured semantic entity roles, configure the display-service HA URL/token, and confirm the rendered bitmap. Record the actual entity IDs and results.
 3. Decide and document the transport boundary for the device secret; firmware currently requires HTTP, so keep it on a trusted local network until transport protection is addressed.
+
+## 2026-09-26 — Implement HACS and LAN Home Assistant setup
+
+### Evidence and findings
+
+- The approved setup choice is a HACS custom integration, Home Assistant on a separate LAN host, and a dedicated read-only gateway API token. HACS requires the integration at repository root under `custom_components/<domain>`; the pre-change component lived under `home-assistant/custom_components/better_lectio`.
+- The existing gateway admin and login UI remains on loopback port `8000`. Home Assistant needs a distinct host-reachable API boundary, so Compose now publishes `lectio-ha-api` on port `8002`, loopback-bound by default. It allows bearer-authenticated GETs for status, schedule, assignments, homework, and cancellations; unsupported routes and methods are not forwarded.
+- Display setup diagnostics previously showed Lectio source state and the latest image but did not distinguish a missing Home Assistant configuration from an invalid token, an unreachable HA host, or missing entities. The display service now persists only an allowlisted aggregate state and check timestamp in its shared data volume; the diagnostics sidecar and gateway keep that response allowlisted.
+- The config flow stores the gateway API token as a secret password selector, uses it in requests, reports rejected credentials separately, and keeps the HA integration's diagnostic payload free of URL/token values. Existing entries without the new token still omit the authorization header for compatibility with the local-only gateway API.
+
+### Tasks completed
+
+- Moved `better_lectio` to root `custom_components/better_lectio`; added root `hacs.json`, an issue tracker in the manifest, HACS repository validation in GitHub Actions, and `make validate-hacs`.
+- Added the separate `lectio-ha-api` process, allowlisted GET proxy, bearer-token check, loopback-by-default Compose binding, and `.env.example` settings for the API token, bind address, and host port.
+- Updated the HA API client and config flow for the read-only token, password-field selector, URL/token validation request, invalid-token message, and entry setup. Added a redaction assertion for the saved API token in Home Assistant diagnostics.
+- Added safe display-to-HA setup state persistence, sidecar reporting, gateway diagnostics aggregation, and login-page status text. Expanded setup tests for connected, unauthorized, unavailable, and secret-redaction behavior.
+- Added README instructions for HACS install and manual copy, separate-host LAN binding/firewall, token creation, integration setup, and the distinct display-to-HA long-lived access token. Documented the service boundary in `ARCHITECTURE_AND_OPERATIONS.md`.
+
+### How it went
+
+- Focused tests first failed on the missing token flow, setup endpoint, and reporting; they passed after implementation. The final service/repository suite `make test` passed (**161 passed**). `make lint` passed. `make test-home-assistant` passed (**32 passed**, with five upstream Home Assistant/backoff deprecation warnings); separate Home Assistant Ruff checks passed. `make validate-hacs` passed (**3 passed**).
+- `docker compose config --quiet`, workflow YAML parsing, and `git diff --check` passed. The gateway service Dockerfile built successfully as temporary image `codex-ha-api-setup:verify`.
+- A final defensive guard for malformed setup-state JSON was checked with the three focused setup-diagnostics tests (**3 passed**) and the final repository Ruff command (**all checks passed**). The complete suites above ran immediately before that guard; the full suites were not repeated after this narrow input-validation change.
+- No credentials were added to the example environment. The real Compose stack was not rebuilt or restarted. No live Home Assistant, HACS install/remote HACS action, Lectio session, Tailnet path, or physical hardware was exercised.
+- Moving the integration caused Ruff to require import-order updates in several existing Home Assistant tests; those changes are limited to import sorting associated with the new root component path.
+
+### Next steps
+
+1. Run the new HACS action and full GitHub workflow on a PR or push; local HACS metadata tests and the gateway image build do not replace remote HACS validation.
+2. Install the custom integration in the target Home Assistant host, bind port `8002` to a reserved private LAN address with firewall access limited to HA, configure the gateway API token and display-to-HA URL/token, then verify entities and the diagnostics status against the live hosts.
+3. Continue the already tracked firmware USB provisioning and physical-device work separately.
+
+## 2026-09-26 — Draft unified Home Assistant setup wizard
+
+### Evidence and findings
+
+- The user selected the full setup wizard and approved the conversational design direction. The existing configuration is split across `.env` and Home Assistant: `HOME_ASSISTANT_URL`, `HOME_ASSISTANT_TOKEN`, and semantic entity IDs are passed to `display-service`; `LECTIO_HA_API_TOKEN` is passed to `lectio-ha-api`; HACS installation and the integration config entry are completed in HA.
+- `/auth/browser` already combines Lectio login, student-ID setup, safe Lectio/display diagnostics, and a bitmap preview. It is loopback-bound by default. The separate read-only `lectio-ha-api` listens on container port 8001 and is published on host port 8002, loopback-bound by default.
+- `display-service` currently reads Home Assistant settings once at startup and polls every 30 seconds. Its setup diagnostics are allowlisted and the existing bitmap persists across refresh failures.
+- The gateway and display images run as UID/GID `10001`; the scoped API is built from the gateway image. A dedicated settings volume can therefore be shared by the gateway (read/write) and display service (read-only) without sharing the Lectio session volume. A second volume can limit the API proxy to a one-way digest of its token.
+- The written design preserves HA as the owner of HACS/config entries and private calendars. Host port binding, firewall rules, and the separate-host LAN address remain outside the web process.
+
+### Tasks completed
+
+- Added and self-reviewed `docs/superpowers/specs/2026-09-26-home-assistant-setup-wizard-design.md`, covering the same-page HA settings form, managed runtime config, dedicated secret volumes, dynamic reload, one-time scoped-token generation/rotation, HA handoff, migration behavior, failure handling, and acceptance checks.
+- Committed only the spec file as `d8c575b` (`docs: specify Home Assistant setup wizard`). Existing HACS implementation edits in the worktree were not included in that commit.
+- No application, test, Compose, or architecture-source files were changed for this follow-up yet.
+
+### How it went
+
+- Spec self-review found and resolved the need to distinguish the URL copied into HA from the host's listener bind address. The wizard can show or collect the HA-reachable API URL, but it cannot change Docker port publishing or the host firewall.
+- Placeholder scan and `git diff --check` passed for the spec. No tests or live Home Assistant/HACS checks were run because implementation has not started.
+- The user approved the written spec on 2026-09-26 and instructed not to ask for another approval in this pass. Implementation method is native execution in this checkout; no code review or deployment is being delegated.
+
+### Next steps
+
+1. Record and self-review the detailed task breakdown below in this canonical file, then implement it without another approval request as explicitly instructed by the user.
+2. Run the specified tests, lint, Compose/HACS validation, and image builds. Do not claim live HA validation unless exercised.
+
+### Approved implementation plan
+
+# Home Assistant Setup Wizard — Implementation Plan
+
+> **Execution:** Native, task-by-task in this checkout. Progress and plan tracking remain in this canonical file per `AGENTS.md`.
+
+**Goal:** Manage display Home Assistant settings and the scoped Lectio API credential from the existing Lectio login page, leaving only host-level networking and Home Assistant's own integration/calendar actions outside it.
+
+**Architecture:** The gateway writes a typed HA display config to a dedicated volume mounted read-only in the display service. A second dedicated volume stores only the hash of the generated scoped API token and is mounted read-only in the API proxy. The display service reloads managed settings every refresh interval; legacy environment settings remain a fallback until a managed config exists. HACS/config-entry administration remains in Home Assistant.
+
+**Tech Stack:** FastAPI, Pydantic, Python 3.12, `secrets`, `hashlib`/`hmac`, aiohttp, pytest, Ruff, Docker Compose.
+
+**Spec:** `docs/superpowers/specs/2026-09-26-home-assistant-setup-wizard-design.md`
+
+## Global Constraints
+
+- Keep the gateway UI loopback-bound by default and preserve the read-only HA API allowlist.
+- Never share `lectio-gateway-data` or its session files with the display or HA API containers.
+- Persist the HA long-lived token only in the dedicated display-config volume; mount that volume read-only in `display-service`. Explicit disconnect writes a secret-free marker so old environment settings cannot reactivate.
+- Persist only a SHA-256 digest of the generated gateway API token; once its file exists, it overrides and disables the legacy environment token.
+- Apply managed display settings within one 30-second refresh interval and preserve the latest valid bitmap on config or HA failures.
+- Keep the current HA entity IDs as defaults; a blank private-calendar list disables private calendars.
+- Do not use a Home Assistant administrator API, install HACS remotely, alter host firewall/Compose port bindings, or expose secrets in diagnostics/logs.
+- Keep `.env` only for host-level binding/port and unrelated service settings in the normal setup flow; existing environment configuration is a migration fallback.
+- Do not claim live Home Assistant, HACS, Tailnet, firewall, Lectio, or device verification unless it is directly performed.
+
+## Review Focus
+
+1. Blank HA token on update must preserve the saved token; explicit disconnect must remove managed settings — test the save/clear routes and store.
+2. A present but malformed or unreadable managed settings/digest file must fail closed instead of falling back to environment secrets — test both stores and API auth.
+3. Token creation/rotation must return raw material once, persist only its digest, and reject the old token immediately — test token store and proxy requests.
+4. Invalid or unreachable new HA settings must not publish a partial or blank bitmap and must expose only a safe status — test backend reload after a previously valid render.
+5. Loopback and wildcard host bindings must not be presented as a usable remote HA URL — test the URL suggestion/status behavior and preserve the manual reachable-URL override.
+
+### Task 1: Add validated gateway setup storage and scoped token hashing
+
+**Files:**
+- Create: `services/lectio-gateway/src/lectio_gateway/setup_config.py`
+- Create: `services/lectio-gateway/src/lectio_gateway/ha_api_auth.py`
+- Test: `services/lectio-gateway/tests/test_setup_config.py`
+- Test: `services/lectio-gateway/tests/test_ha_api_auth.py`
+
+**Interfaces:** Store the version-1 JSON file `/var/lib/better-lectio-ha-setup/home-assistant-display.json` with `ha_url`, `ha_token`, and an `entities` object holding the five semantic roles. `HomeAssistantSetupStore` reads/writes that file; explicit disconnect atomically replaces it with a secret-free marker so legacy environment values stay disabled. The store also reads/writes the non-secret gateway URL in `/var/lib/better-lectio/ha-api-url.json`. `GatewayApiTokenStore.create_or_rotate() -> str` generates a token and atomically writes only `/var/lib/better-lectio-api-auth/token.sha256`; `matches(candidate: str) -> bool` compares against its digest and fails closed if the file exists but is invalid.
+
+- [x] Add failing store tests for defaults, URL validation, entity role validation, JSON restart persistence, token-preserving blank updates, explicit clear, and rejection of credentials/query/fragment in URLs.
+- [x] Add failing permission/contents tests showing the HA token exists only in the dedicated managed display file, API token raw value is absent from the digest file, and malformed managed files fail closed.
+- [x] Run the two new test files and confirm the missing store/token APIs fail.
+- [x] Implement atomic JSON persistence (`0700` directory, `0600` files, same-directory temporary file plus replace) and token generation using `secrets.token_urlsafe(32)` with SHA-256 digest persistence.
+- [x] Verify focused store tests pass and no token is included in model reprs or validation errors.
+
+### Task 2: Authenticate the HA API from its digest volume
+
+**Files:**
+- Modify: `services/lectio-gateway/src/lectio_gateway/ha_api.py`
+- Modify: `services/lectio-gateway/tests/test_ha_api.py`
+- Modify: `docker-compose.yml`
+- Test: `tests/test_compose_scaffold.py`
+
+**Interfaces:** Configure the proxy with `LECTIO_HA_API_AUTH_DIR=/var/lib/better-lectio-api-auth`. If `token.sha256` exists, hash the supplied bearer and constant-time compare it to the file value on each request; if it does not exist, preserve legacy raw `LECTIO_HA_API_TOKEN` behavior. Never use the environment fallback if a managed file exists but cannot be read/validated.
+
+- [x] Add failing API tests for hashed-token acceptance, raw-token rejection after managed rotation, missing/corrupt digest behavior, legacy environment fallback only before managed setup, and unchanged GET allowlisting.
+- [x] Mount a new `lectio-ha-api-auth` named volume read-only into `lectio-ha-api`; pass its path as a non-secret environment setting.
+- [x] Implement per-request managed digest loading and constant-time comparison while preserving sanitized 401/503/502 behavior.
+- [x] Run `python -m pytest -q services/lectio-gateway/tests/test_ha_api.py tests/test_compose_scaffold.py`; require token rotation and no extra exposed routes to pass.
+
+### Task 3: Load and reload managed HA settings in the display service
+
+**Files:**
+- Create: `services/display-service/src/display_service/setup_config.py`
+- Modify: `services/display-service/src/display_service/main.py`
+- Modify: `services/display-service/src/display_service/entity_config.py`
+- Test: `services/display-service/tests/test_setup_config.py`
+- Test: `services/display-service/tests/test_display_backend.py`
+
+**Interfaces:** `HomeAssistantDisplaySettingsStore.load(environ)` returns a validated managed config when `home-assistant-display.json` exists, legacy environment config when no managed file exists, or an unconfigured result. The managed JSON roles map to `HomeAssistantEntityConfig`. The refresh supervisor re-reads settings at each 30-second refresh boundary before calling `DisplayBackend.refresh_if_due()`; it closes/replaces its `HomeAssistantClient` and `DisplayModelService` only when a validated config changes, and closes them on disconnect/shutdown.
+
+- [x] Add failing tests for managed-file precedence over environment, environment fallback before migration, config reload after file replacement, entity-role validation, and safe unconfigured state.
+- [x] Add a backend regression that starts with a valid image, applies invalid credentials/config, verifies the prior image remains, and confirms diagnostics contain only an allowlisted state.
+- [x] Refactor lifespan/client ownership so the refresh loop can detect config changes without restarting the container; do not put tokens in logs or setup diagnostics.
+- [x] Run focused setup-config and display-backend tests; require update application within one refresh cycle and last-image retention.
+
+### Task 4: Add setup endpoints and the Home Assistant section to `/auth/browser`
+
+**Files:**
+- Modify: `services/lectio-gateway/src/lectio_gateway/main.py`
+- Modify: `services/lectio-gateway/tests/test_gateway_health.py`
+- Modify: `services/lectio-gateway/tests/test_ha_api.py`
+
+**Interfaces:** Add same-origin-checked routes `GET /auth/home-assistant/setup`, `POST /auth/home-assistant/display-settings`, `POST /auth/home-assistant/gateway-api-url`, `POST /auth/home-assistant/gateway-api-token`, and `POST /auth/home-assistant/disconnect`. GET returns only defaults, non-secret URL, setup source/connection state, and configured booleans. Token POST returns the newly generated raw token once; other responses never return it or the HA token. The existing page adds a form for HA URL, write-only token input, entity roles, HA-reachable API URL, HACS handoff instructions, token generate/rotate/copy state, and disconnect.
+
+- [x] Add failing tests proving the GET/setup diagnostics redact both token types and that each mutation rejects a mismatched Origin.
+- [x] Add failing route tests for valid/invalid settings, blank-token preservation, disconnect, token generation/rotation, and environment-token invalidation after digest creation.
+- [x] Add page assertions for the setup form, explicit HACS/config-entry steps, loopback/LAN binding explanation, and one-time-token handling.
+- [x] Implement the routes using the stores from Task 1 and safe status from the existing display diagnostics; keep all returned state allowlisted.
+- [x] Run gateway auth/setup/API tests and confirm existing Lectio login/student-ID actions and diagnostics still work.
+
+### Task 5: Wire Compose volumes, simplify new-install `.env`, and update authorized setup docs
+
+**Files:**
+- Modify: `docker-compose.yml`
+- Modify: `.env.example`
+- Modify: `services/lectio-gateway/Dockerfile`
+- Modify: `services/display-service/Dockerfile`
+- Modify: `tests/test_environment_template.py`
+- Modify: `tests/test_compose_scaffold.py`
+- Modify: `README.md`
+- Modify: `ARCHITECTURE_AND_OPERATIONS.md`
+
+- [x] Add the `ha-display-config` named volume read/write to gateway and read-only to display service; add the API-auth volume only to gateway and `lectio-ha-api`, with read-only API mount. Create/chown both mount points for UID/GID 10001 in the relevant images.
+- [x] Pass host bind address/port to the gateway for safe URL suggestions; keep actual API/UI host bindings unchanged and loopback-defaulted.
+- [x] Keep environment variables wired for upgrade fallback, but remove HA URL/token/entity roles and the raw API token from normal `.env.example` setup instructions; retain host bind/port values.
+- [x] Update `.env.example`/Compose tests for new mounts, modes, no accidental secrets, and unchanged private-calendar blank semantics.
+- [x] Update README and architecture setup guidance to say the login page handles display HA settings and token preparation, while HACS/config entry/private calendars remain in HA and remote-host bind/firewall remains host-side.
+- [x] Run focused environment/Compose/HACS checks and inspect the rendered Compose configuration for the intended volume access only.
+
+### Task 6: Integrated verification and final review
+
+**Files:** all changes from Tasks 1–5 plus this execution log.
+
+- [x] Run focused gateway, API auth, setup store, display-config, and display-backend tests.
+- [x] Run the repository suite, Home Assistant suite, repository/HA Ruff checks, `make validate-hacs`, and `docker compose config --quiet`.
+- [x] Build the gateway, display, and default Compose services; inspect volume mounts and container user IDs without printing secret file contents.
+- [x] Run `git diff --check`; review the complete diff for unintentional changes and secret leakage.
+- [ ] Verify startup/restart persistence and health endpoints only if the local Compose stack can be safely recreated; do not claim live HA/HACS/Tailnet/firewall or hardware validation without actually exercising it.
+- [x] Record actual outcomes and remaining live setup actions below, then commit the integrated code/docs/tests as one coherent change because the already-present HACS setup edits overlap these same files; do not push without explicit authorization.
+
+### Plan self-review
+
+- **Spec coverage:** Tasks 1–2 cover the two restricted stores, token generation/hash, rotation, and legacy API-token fallback. Task 3 covers managed display-config precedence, runtime reload, safe status, and last-image retention. Task 4 puts all HA settings and HACS instructions on the existing login page without HA admin calls. Task 5 wires service access and updates authorized setup documentation. Task 6 covers integrated verification and limitations.
+- **Step scan:** Each behavioral change has named failing tests, an expected red result, a bounded implementation, and a focused green command. Service storage, API authentication, runtime reload, UI routes, and deployment wiring have separate test boundaries.
+- **Type consistency:** The display settings payload uses the same semantic role names/defaults as `HomeAssistantEntityConfig`; the gateway API token store's `create_or_rotate() -> str` output is the sole route response containing raw generated material; API validation consumes the stored digest.
+- **Review focus:** Blank update, corrupt files, rotation, last-image preservation, and unusable bind addresses are all tied to owning tests above.
+- **Proportion:** Six tasks divide the coupled gateway/UI, API auth, display reload, and Compose/docs scopes; no unrelated product subsystem is included.
+
+## Agent execution log
+
+### 2026-09-26 — Implement approved Home Assistant setup wizard
+
+#### Evidence and findings
+
+- The implementation follows the user-approved setup wizard spec and retains the existing HACS integration changes already present in this worktree. The login page now stores display settings and prepares the scoped integration token; HACS installation, HA config-entry creation, private calendar creation, host listener binding, and firewall configuration remain in their owning UIs/host settings.
+- TDD RED/GREEN evidence: gateway store tests initially failed before implementation; managed API tests then failed on rotation/corrupt-digest handling; display config/runtime tests failed before their loader/supervisor existed; wizard route tests returned 404 before endpoints were added; Compose tests failed before new mounts and the simplified environment template. The final focused gateway/setup/display configuration run passed **45 tests**.
+- Final repository service run: `make test` passed **203 tests**. `make lint` passed after correcting one import-order issue discovered in the combined verification pass. The Home Assistant suite passed **32 tests** under Python 3.14, its Ruff check passed, and `make validate-hacs` passed **3 tests**.
+- `docker compose config --quiet` passed. `docker compose build` built the default Compose services. Image inspection reported UID/GID `10001:10001` for gateway, API, display, and diagnostics images. Rendered Compose mounts confirmed gateway read/write access to both managed volumes, read-only API digest access, read-only display-config access for the display service, and no HA config volume on diagnostics.
+- `git diff --check` passed after removing the approved-spec status line's trailing whitespace. Git printed only the repository's LF-to-CRLF autocrlf notices.
+
+#### Tasks completed
+
+- Added versioned, validated managed HA display settings with atomic `0600` writes in a `0700` directory, blank-token preservation, semantic entity validation, and a secret-free disconnect tombstone.
+- Added scoped API token generation/rotation with digest-only persistence, immediate managed-digest validation, and fail-closed behavior for corrupt, unreadable, or non-regular managed paths.
+- Added display-side managed-config precedence, legacy environment fallback before wizard setup, live reload at the 30-second refresh boundary, client replacement/cleanup, and safe last-image retention on invalid configuration.
+- Added same-origin setup routes and the full setup section to `/auth/browser`, including write-only HA token input, entity roles, HA-reachable API URL, bind-scope guidance, one-time API token reveal/copy, HACS/config-flow instructions, and disconnect.
+- Added dedicated Compose volumes and access modes, removed display/API secrets and entity IDs from `.env.example`, and updated README/architecture setup guidance.
+
+#### How it went
+
+- The complete suite first revealed that duplicate test basenames collide during pytest collection; the display setup test file was renamed to a unique basename. A standalone display test run also needed the repository's `fonts-dejavu-core` runtime dependency; the final suite installed that dependency as CI does.
+- Review found that deleting managed config on disconnect could reactivate old `.env` values. Disconnect now replaces the saved secret-bearing file with a versioned, secret-free tombstone; tests confirm legacy fallback stays disabled afterward.
+- No running Compose services were restarted or recreated. `docker ps` showed an active `better-lectio-ha-display` stack, so startup/restart persistence and health checks against the modified images were left unverified to avoid disturbing it. The built images were not launched.
+- No live Home Assistant, HACS installation/action, Lectio login, firewall/LAN path, Tailnet path, or physical display was exercised. These remain runtime checks for deployment.
+
+#### Next steps
+
+1. Whole-diff review and the local commit are complete; see the follow-up entry below for the final evidence. The change was not pushed.
+2. On the Compose host, set a reserved LAN bind address for `lectio-ha-api` and restrict its host port to Home Assistant when those services run on different machines.
+3. Use the login-page wizard to save the display URL/token/entities and generate the scoped API token; install/configure Better Lectio through HACS and its Home Assistant config flow, then verify the live entity and display diagnostics.
+4. Run the remote HACS repository action and the deployed runtime checks in the target environment; they are not represented by the local fixture/unit results above.
+
+### 2026-09-26 — Resolve setup-wizard review findings
+
+#### Evidence and findings
+
+- The integrated change is committed locally on `codex/home-assistant-setup-wizard` with message `feat: add Home Assistant setup wizard`; it has not been pushed.
+- The read-only implementation review found that rotating the scoped token invalidated Home Assistant's saved credential with no in-place recovery flow, and that the Origin guard compared hostname/port while missing scheme mismatches. Both findings are resolved below with regressions.
+- The local Windows Python is 3.11 and does not include Home Assistant. Validation used the repository CI runtimes in temporary Docker containers: Python 3.12 for service tests/lint and Python 3.14 with `homeassistant==2026.9.3` for the integration suite/lint.
+- Final repository run passed **209 tests**; repository Ruff checks passed. Home Assistant suite passed **35 tests**, manifest/HACS metadata checks passed **3 tests**, HA/integration Ruff checks passed, and the integration translation JSON parsed successfully.
+- `docker compose config --quiet` passed. `docker compose build lectio-gateway lectio-ha-api` built both updated images. The existing Compose stack remained running; no container was restarted or recreated.
+- `git diff --cached --check` passed. The complete staged diff was reviewed; credential-like literals were confined to explicitly fake test fixtures, and no production or environment-template secret was found. Git emitted only expected LF-to-CRLF notices.
+- The approved setup spec retains its full Markdown content and approved status; its line breaks were restored to normal Markdown before this review.
+
+#### Tasks completed
+
+- Added the integration's Home Assistant **Reconfigure** flow. It verifies the replacement URL/token against the gateway before changing the current entry, then updates and reloads that same entry ID while preserving its entities. A rejected token leaves the existing entry data untouched. Added the localized form text, HACS handoff guidance, rotation confirmation, and documentation.
+- Hardened the Origin check to compare scheme, normalized hostname, and effective port. It rejects `null`, userinfo, path/query-bearing values, and same-host wrong-scheme requests; equivalent default-port/case variants remain accepted.
+- Added focused regressions for successful credential rotation/reload, rejected credentials, blank password-field behavior, the wizard's reconfigure instruction, malformed origins, scheme mismatch, and default-port normalization.
+
+#### How it went
+
+- Direct local test collection first failed because Python 3.11 lacked the service package and Home Assistant. The project-pinned Docker runtimes provided the required dependencies; the full checks then passed.
+- The modified gateway/API images were rebuilt but not launched because the current Compose stack is active. Startup/restart persistence, live health, Home Assistant/HACS, Lectio, host firewall/LAN, Tailnet, and physical display behavior remain unverified.
+
+#### Next steps
+
+1. On the Compose host, set a reserved LAN bind address for `lectio-ha-api` and restrict its host port to Home Assistant when those services run on different machines.
+2. Use the login-page wizard, install/configure Better Lectio through HACS and Home Assistant, then verify the live integration and display diagnostics.
+3. Recreate/restart the Compose stack and verify persisted settings only when the active deployment can be safely taken down; run the remote HACS and other deployed checks in their target environment.

@@ -6,13 +6,15 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
 from .api import GatewayApi
-from .const import PLATFORMS
+from .const import CONF_API_TOKEN, CONF_URL, PLATFORMS
 from .coordinator import LectioDataUpdateCoordinator
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up a Better Lectio Gateway entry."""
-    api = GatewayApi(hass, entry.data["url"])
+    api = GatewayApi(
+        hass, entry.data[CONF_URL], entry.data.get(CONF_API_TOKEN)
+    )
     coordinator = LectioDataUpdateCoordinator(
         hass,
         api,

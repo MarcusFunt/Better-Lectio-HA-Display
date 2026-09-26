@@ -45,6 +45,8 @@ class HomeAssistantClient:
             or parsed.password is not None
             or parsed.query
             or parsed.fragment
+            or "?" in base_url
+            or "#" in base_url
         ):
             raise ValueError("Invalid Home Assistant URL")
         if not token.strip():

@@ -1,7 +1,7 @@
 # Home Assistant Setup Wizard on the Lectio Login Page
 
 **Date:** 2026-09-26  
-**Status:** Draft for user review  
+**Status:** Approved by the user on 2026-09-26
 **Requested outcome:** Configure the largest practical share of Home Assistant setup from the existing Lectio login page.
 
 ## Goals

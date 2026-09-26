@@ -3,18 +3,29 @@
     "step": {
       "user": {
         "title": "Connect to Better Lectio Gateway",
-        "description": "Enter the base URL of your local Better Lectio Gateway.",
+        "description": "Enter the LAN URL and read-only API token configured for Better Lectio.",
         "data": {
-          "url": "Gateway URL"
+          "url": "Better Lectio API URL",
+          "api_token": "Better Lectio API token"
+        }
+      },
+      "reconfigure": {
+        "title": "Update Better Lectio connection",
+        "description": "Enter the gateway URL and current scoped API token. This updates and reloads the existing integration entry, preserving its entities.",
+        "data": {
+          "url": "Better Lectio API URL",
+          "api_token": "New Better Lectio API token"
         }
       }
     },
     "error": {
       "invalid_url": "Enter a valid HTTP or HTTPS gateway URL.",
+      "invalid_auth": "The Better Lectio API token was rejected.",
       "cannot_connect": "Could not connect to a compatible Better Lectio Gateway."
     },
     "abort": {
-      "already_configured": "This gateway is already configured."
+      "already_configured": "This gateway is already configured.",
+      "reconfigure_successful": "The Better Lectio connection was updated."
     }
   },
   "options": {

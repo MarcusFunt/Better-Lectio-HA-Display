@@ -1,6 +1,10 @@
 import asyncio
 from datetime import datetime, timedelta, timezone
 
+from homeassistant.config_entries import SOURCE_USER, ConfigEntry
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers.update_coordinator import UpdateFailed
+
 from custom_components.better_lectio.api import GatewayApiError
 from custom_components.better_lectio.calendar import LectioCalendar
 from custom_components.better_lectio.const import DOMAIN
@@ -9,9 +13,6 @@ from custom_components.better_lectio.coordinator import (
     _safe_auth_state,
     _safe_sync,
 )
-from homeassistant.config_entries import SOURCE_USER, ConfigEntry
-from homeassistant.core import HomeAssistant
-from homeassistant.helpers.update_coordinator import UpdateFailed
 
 
 def make_entry():

@@ -6,6 +6,7 @@ DOMAIN = "better_lectio"
 INTEGRATION_VERSION = "0.1.0"
 
 CONF_URL = "url"
+CONF_API_TOKEN = "api_token"
 CONF_REFRESH_INTERVAL = "refresh_interval"
 
 DEFAULT_REFRESH_INTERVAL = 300

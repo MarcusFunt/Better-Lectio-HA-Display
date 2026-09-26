@@ -10,7 +10,7 @@ from lectio_gateway.lectio.models import (
     LectioCookie,
     LectioSyncStatus,
 )
-from lectio_gateway.main import app
+from lectio_gateway.main import DisplayDiagnosticsClient, app, httpx
 
 
 def test_health_endpoint_reports_gateway_identity():
@@ -24,6 +24,47 @@ def test_health_endpoint_reports_gateway_identity():
 
     assert response.status_code == 200
     assert response.json() == {"status": "ok", "service": "lectio-gateway"}
+
+
+def test_home_assistant_setup_diagnostics_client_allowlists_sidecar_payload(
+    monkeypatch,
+):
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "state": "connected",
+                "last_checked_at": "2026-09-26T08:30:00+00:00",
+                "token": "private-token",
+                "url": "http://private-host:8123",
+            }
+
+    class FakeHttpClient:
+        def __init__(self, *, timeout):
+            assert timeout == 2.0
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def get(self, url):
+            assert url == "http://display-diagnostics:8001/diagnostics/setup"
+            return FakeResponse()
+
+    monkeypatch.setattr(httpx, "AsyncClient", FakeHttpClient)
+
+    result = asyncio.run(
+        DisplayDiagnosticsClient("http://display-diagnostics:8001").setup()
+    )
+
+    assert result == {
+        "state": "connected",
+        "last_checked_at": "2026-09-26T08:30:00+00:00",
+    }
 
 
 def test_auth_diagnostics_reports_safe_runtime_and_bitmap_details_without_secrets(
@@ -83,6 +124,7 @@ def test_auth_diagnostics_reports_safe_runtime_and_bitmap_details_without_secret
         "generated_at": "2026-09-25T06:00:00+00:00",
         "image_url": "/auth/diagnostics/bitmap/" + "a" * 64 + ".bmp",
     }
+    assert payload["home_assistant_setup"] == {"state": "connected"}
     assert "456789" not in response.text
     assert "cookie-value-secret" not in response.text
     assert "student-secret-cookie" not in response.text
@@ -277,6 +319,9 @@ class FakeDisplayDiagnosticsClient:
     async def current(self):
         return self.response
 
+    async def setup(self):
+        return {"state": "connected"}
+
     async def image(self, content_hash):
         assert content_hash == "a" * 64
         return b"BM newest display"
@@ -330,4 +375,5 @@ def test_login_page_contains_source_diagnostics_and_bitmap_preview(tmp_path):
     assert response.status_code == 200
     assert 'id="source-diagnostics"' in response.text
     assert 'id="display-preview"' in response.text
+    assert 'id="home-assistant-setup-info"' in response.text
     assert "refreshDiagnostics" in response.text

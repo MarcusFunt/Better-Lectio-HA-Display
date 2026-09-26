@@ -1,12 +1,13 @@
 from datetime import datetime, timedelta, timezone
 
+from homeassistant.components.calendar import CalendarEvent
+from homeassistant.components.todo import TodoItemStatus
+
 from custom_components.better_lectio.calendar import calendar_event_from_lesson
 from custom_components.better_lectio.todo import (
     assignment_to_todo,
     homework_to_todo,
 )
-from homeassistant.components.calendar import CalendarEvent
-from homeassistant.components.todo import TodoItemStatus
 
 
 def test_calendar_event_maps_teacher_room_and_stable_uid():

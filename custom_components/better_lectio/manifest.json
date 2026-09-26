@@ -4,6 +4,7 @@
   "codeowners": ["@MarcusFunt"],
   "config_flow": true,
   "documentation": "https://github.com/MarcusFunt/Better-Lectio-HA-Display",
+  "issue_tracker": "https://github.com/MarcusFunt/Better-Lectio-HA-Display/issues",
   "integration_type": "service",
   "iot_class": "local_polling",
   "requirements": [],

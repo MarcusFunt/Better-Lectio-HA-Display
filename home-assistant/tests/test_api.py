@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 
 import aiohttp
 import pytest
+
 from custom_components.better_lectio.api import GatewayApi, GatewayApiError
 
 
@@ -26,31 +27,36 @@ class FakeSession:
         self.response = response
         self.calls = []
 
-    def get(self, url, *, params=None, timeout=None):
-        self.calls.append((url, params, timeout))
+    def get(self, url, *, params=None, timeout=None, headers=None):
+        self.calls.append((url, params, timeout, headers))
         return self.response
 
 
-def make_api(response):
+def make_api(response, token=None):
     api = object.__new__(GatewayApi)
     api._base_url = "http://gateway.local"
     api._timeout = aiohttp.ClientTimeout(total=15)
     api._session = FakeSession(response)
+    api._api_token = token
     return api
 
 
 def test_source_request_sends_timezone_aware_date_range():
     async def run():
-        api = make_api(FakeResponse(200, {"items": [], "sync": {"state": "valid"}}))
+        token = "x" * 43
+        api = make_api(
+            FakeResponse(200, {"items": [], "sync": {"state": "valid"}}), token
+        )
         start = datetime(2026, 9, 25, 8, tzinfo=timezone.utc)
         end = datetime(2026, 9, 26, 8, tzinfo=timezone.utc)
 
         await api.get_source("schedule", start, end)
 
-        url, params, timeout = api._session.calls[0]
+        url, params, timeout, headers = api._session.calls[0]
         assert url == "http://gateway.local/api/v1/schedule"
         assert params == {"start": start.isoformat(), "end": end.isoformat()}
         assert timeout.total == 15
+        assert headers == {"Authorization": f"Bearer {token}"}
 
     asyncio.run(run())
 
@@ -67,3 +73,12 @@ def test_http_errors_discard_response_body():
         assert "student" not in str(error.value)
 
     asyncio.run(run())
+
+
+def test_legacy_config_without_api_token_sends_no_authorization_header():
+    async def run():
+        api = make_api(FakeResponse(200, {"auth": {}, "sources": {}}))
+        await api.get_status()
+        return api._session.calls[0][3]
+
+    assert asyncio.run(run()) is None

@@ -11,8 +11,8 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/* \
     && python -m pip install --no-cache-dir . \
     && useradd --system --uid 10001 --create-home service \
-    && mkdir -p /var/lib/better-lectio-display \
-    && chown -R service:service /var/lib/better-lectio-display
+    && mkdir -p /var/lib/better-lectio-display /var/lib/better-lectio-ha-setup \
+    && chown -R service:service /var/lib/better-lectio-display /var/lib/better-lectio-ha-setup
 
 USER 10001:10001
 EXPOSE 8000

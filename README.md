@@ -125,6 +125,22 @@ The Display Service reads Home Assistant rather than bypassing it with direct Le
 
 Assignments and homework are initially read-only HA todo entities. Marking an HA item complete must not silently modify or submit anything in Lectio.
 
+### First-time setup
+
+Start the stack, then open the Lectio sign-in page at `http://localhost:8000/auth/browser`. The **Home Assistant setup** section on that page manages the display URL, a write-only Home Assistant long-lived token, and the semantic entity IDs. It saves those values in a dedicated Compose volume and the display service reloads changes within 30 seconds. Existing `.env` HA settings remain a migration fallback until the wizard first saves or disconnects managed settings; an explicit disconnect writes a secret-free marker so old environment settings cannot reactivate the connection.
+
+The same section helps prepare the separate Home Assistant integration connection:
+
+1. If Home Assistant runs on another host, set `LECTIO_HA_API_BIND_ADDRESS` in the Compose host's `.env` to a reserved LAN address for that host, then apply it with `docker compose up -d lectio-ha-api`. The default `127.0.0.1` bind works only when Home Assistant can reach the Compose host through loopback. The wizard reports the current bind scope and port.
+2. Allow the configured API port (default `8002`) through the host firewall only from Home Assistant. Enter the server LAN URL in the wizard and save it.
+3. Install **Better Lectio** through HACS. Add `MarcusFunt/Better-Lectio-HA-Display` as a custom repository with category **Integration**, install the integration, and restart Home Assistant. The wizard links to HACS's custom repository instructions. Manual installation is also possible by copying `custom_components/better_lectio` into `<Home Assistant config>/custom_components/better_lectio` and restarting HA.
+4. Generate the scoped API token in the wizard and copy it immediately; only its SHA-256 digest is stored by the gateway. Rotation invalidates the previous token immediately.
+5. In Home Assistant, add the **Better Lectio** integration using the saved API URL and generated token. The config flow checks access before saving the entry. To rotate credentials later, use **Reconfigure** on the existing entry and enter the new token; this preserves its entities. Create or select private calendars in HA, then add their entity IDs to the wizard's display settings.
+
+The `lectio-ha-api` service accepts only bearer-authenticated `GET` requests for status and the four normalized Lectio data sources. It does not expose the sign-in UI or gateway admin endpoints. HACS installation and integration config-entry management remain in Home Assistant; the wizard does not call HA's administrator APIs or create private calendars remotely.
+
+The gateway page at `http://localhost:8000/auth/browser` also reports the display service's Home Assistant connection state and shows the latest rendered bitmap. The integration's Home Assistant diagnostics show gateway reachability and Lectio source sync state without returning either token. The gateway UI and HA API remain loopback-bound by default; host binding and firewall configuration are intentionally host-level tasks.
+
 ## Display layout
 
 The display is a single chronological schedule covering:
@@ -227,13 +243,14 @@ These commands describe the target workflow; they should not be assumed to exist
 
 The target deployment is **Docker Compose on a desktop/server host**, not a Raspberry Pi Zero/systemd deployment.
 
-Logical services are expected to include:
+Logical services include:
 
 ```text
 lectio-gateway
 lectio-auth-browser
 lectio-auth-view
 display-service
+lectio-ha-api
 ```
 
 The repository integrates with an existing Home Assistant instance by default; it does not need to own the HA deployment itself.
@@ -282,7 +299,7 @@ Each service should expose enough health/status information to identify which la
 
 ## Current implementation status
 
-The repository is in an architectural migration. The Compose and service-package scaffold is in place, but the health endpoints are the only runtime behavior in the new services so far. The services are not published to host ports yet; API and device access will be wired in their later milestones.
+The repository includes the Lectio Gateway API, a separate scoped read-only API for Home Assistant, a versioned HACS integration with a config flow, the HA-backed display service and diagnostics, and a compiled XIAO ESP32-S3 firmware foundation. HACS custom-repository installation and manual-copy instructions are above. A successful CI or local test run does not verify a live Home Assistant connection, a real Lectio session, or physical display hardware.
 
 The existing `trmnl_schedule/`, retained prototype tests, `legacy/requirements.txt`, and systemd units under `legacy/systemd/` belong to the earlier prototype and do not define the target architecture. `.env.example` now contains only target-stack placeholders; it has no Lectio password or raw ICS settings.
 

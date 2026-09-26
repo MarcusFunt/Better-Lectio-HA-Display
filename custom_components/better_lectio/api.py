@@ -31,9 +31,12 @@ class GatewayApiError(Exception):
 class GatewayApi:
     """Client that reuses Home Assistant's shared HTTP session."""
 
-    def __init__(self, hass: HomeAssistant, base_url: str) -> None:
+    def __init__(
+        self, hass: HomeAssistant, base_url: str, api_token: str | None = None
+    ) -> None:
         self._session = async_get_clientsession(hass)
         self._base_url = base_url.rstrip("/")
+        self._api_token = api_token.strip() if api_token else None
         self._timeout = aiohttp.ClientTimeout(total=REQUEST_TIMEOUT_SECONDS)
 
     async def get_status(self) -> dict[str, Any]:
@@ -68,8 +71,16 @@ class GatewayApi:
     ) -> dict[str, Any]:
         """Issue a GET without retaining gateway response bodies in exceptions."""
         try:
+            headers = (
+                {"Authorization": f"Bearer {self._api_token}"}
+                if self._api_token
+                else None
+            )
             async with self._session.get(
-                f"{self._base_url}{path}", params=params, timeout=self._timeout
+                f"{self._base_url}{path}",
+                params=params,
+                timeout=self._timeout,
+                headers=headers,
             ) as response:
                 if response.status != 200:
                     raise GatewayApiError(response.status)
