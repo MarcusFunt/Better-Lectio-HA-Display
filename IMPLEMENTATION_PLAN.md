@@ -2702,15 +2702,16 @@ Task 2 test coverage also includes `test_client_factory_failure_keeps_week_lkg`,
 ### How it went
 
 - `platformio run -d firmware -e lectio_s3` passed in the candidate worktree in 68.99 seconds. PlatformIO reported 52,160/327,680 bytes RAM and 1,141,001/1,900,544 bytes flash. Existing upstream dependency warnings were non-fatal.
-- Rebuilt the integrated main tree with `pio run -d firmware -e lectio_s3`; it passed in 86.37 seconds with the same RAM/flash footprint. The new GitHub Actions run and push are still pending.
-- The workflow YAML parsed successfully and exposed the expected three jobs. The staged firmware snapshot has 326 paths and 87,383 inserted lines; no `.pio`, `builds`, generated BMP, or local integration-secret file is staged. A credential-pattern scan found only request-header test sources and no common high-entropy API/GitHub token prefixes.
+- Rebuilt the integrated main tree with `pio run -d firmware -e lectio_s3`; it passed in 86.37 seconds with the same RAM/flash footprint.
+- The workflow YAML parsed successfully and exposed the expected three jobs. The committed firmware snapshot has 326 paths and 87,385 inserted lines; no `.pio`, `builds`, generated BMP, or local integration-secret file is committed. A credential-pattern scan found only request-header test sources and no common high-entropy API/GitHub token prefixes.
 - `git diff --cached --check` reports existing trailing whitespace in the imported upstream snapshot. The changed workflow, plan, and project-owned Lectio sources pass a targeted whitespace check; I kept upstream files intact rather than rewriting unrelated vendor formatting.
 - `docker compose ps` showed the gateway, display service, diagnostics, and auth lifecycle containers healthy. The changes do not touch their image inputs, so no container rebuild or restart is needed for this firmware integration.
 - Firmware does not change the running service images. A successful compile is not evidence of USB provisioning, real API/network behavior, e-paper refresh, or a physical hardware flash.
+- Committed as `9ae3427eacbf0cf8f5b02e1a45c8625ea7e29406` (`feat: add Lectio XIAO display firmware foundation`) and pushed to `origin/main`; local `HEAD` and `git ls-remote origin refs/heads/main` matched.
+- GitHub Actions run [36206738634](https://github.com/MarcusFunt/Better-Lectio-HA-Display/actions/runs/36206738634) passed all three jobs: repository tests/lint, Compose validation/service image builds, Home Assistant tests/lint, and the new Lectio firmware build. GitHub reported only runner/action deprecation and Ubuntu migration notices.
 
 ### Next steps
 
-1. Finish the final staged-diff review, commit and push the firmware foundation plus its CI build to `origin/main`, then confirm the GitHub Actions result and remote SHA.
-3. Implement USB provisioning against the display-service credential registry, then validate Wi-Fi, GPIO mapping, API requests, and e-paper refresh on the actual board.
-4. Complete the live Home Assistant handoff: install the custom integration, verify gateway reachability from HA and the configured semantic entity roles, configure the display-service HA URL/token, and confirm the rendered bitmap. Record the actual entity IDs and results.
-5. Decide and document the transport boundary for the device secret; firmware currently requires HTTP, so keep it on a trusted local network until transport protection is addressed.
+1. Implement USB provisioning against the display-service credential registry, then validate Wi-Fi, GPIO mapping, API requests, and e-paper refresh on the actual board.
+2. Complete the live Home Assistant handoff: install the custom integration, verify gateway reachability from HA and the configured semantic entity roles, configure the display-service HA URL/token, and confirm the rendered bitmap. Record the actual entity IDs and results.
+3. Decide and document the transport boundary for the device secret; firmware currently requires HTTP, so keep it on a trusted local network until transport protection is addressed.
