@@ -3246,3 +3246,29 @@ This plan assumes the selected separate-LAN-host Home Assistant setup, one XIAO 
 1. Apply the new Compose stack on the host with orphan removal, preserving the two active data volumes; confirm that the gateway source diagnostics refresh and the bitmap preview becomes available.
 2. Provision the physical device over USB and verify authenticated bitmap fetch, visible rendering, acknowledgement, and recovery from a brief network loss. The board/button mapping still requires hardware confirmation.
 3. After confirming the migration, remove any retired HA-only Docker volumes or old host secrets through a deliberate host cleanup.
+
+### 2026-09-27 — Run the direct Lectio pipeline in the local Compose stack
+
+#### Evidence and findings
+
+- The checkout started clean on `codex/direct-lectio-display` at `d218c18560cdc5769aa13f32355b01e00a4cbc6b`, which was already pushed to `origin/codex/direct-lectio-display`. The local Compose project still ran five older containers, including the orphaned `lectio-ha-api` service.
+- `docker compose up --detach --build --remove-orphans` rebuilt the direct-pipeline images, recreated the display, diagnostics, and gateway containers, and removed the HA API container. The existing gateway and display named volumes remained attached. After a final forced recreation, all four running containers reported healthy and their image IDs matched the current local builds. The only host-published ports are gateway `127.0.0.1:8000` and display `192.168.1.29:8001`; no HA service or port 8002 remains published.
+- On initial display startup, the gateway was not yet ready and the first refresh was skipped. The existing 30-second retry then fetched `/api/v1/status`, `/schedule`, `/assignments`, `/homework`, and `/cancellations` over the Compose network. The gateway reported all four sources valid and not stale, with successful sync timestamps on 2026-09-27 at about 17:45:29 UTC. `/auth/diagnostics` reported an available bitmap with content hash `08666ab5cd6f81e93f9baf085f12126a99a04baced476a45864ab6f83fc8f491`; its preview route returned a 48,062-byte, 800×480, 1-bit BMP. The same image was available after the service restart.
+- The gateway and display host health endpoints returned `ok`, and a container-side request from display service to `http://lectio-gateway:8000/api/v1/status` returned HTTP 200. An unauthenticated request to the LAN device display endpoint returned HTTP 401, confirming credential enforcement. These checks do not establish a physical device fetch, flash, or panel update.
+- Two retired HA-only Docker volumes (`ha-display-config` and `lectio-ha-api-auth`) still exist on the host but are not mounted by any active container. They were preserved because deleting old data is a separate irreversible cleanup decision. The historical Compose project name remains to retain the two active data volumes.
+
+#### Tasks completed
+
+- Deployed the direct gateway-to-display Compose stack locally and removed the orphaned HA API container without removing active volumes.
+- Removed obsolete HA setup/auth directory creation from the gateway Dockerfile, rebuilt its image, and force-recreated all four default services so each uses the latest built image.
+- Removed the unused `LECTIO_HA_API_BIND_ADDRESS` and `LECTIO_HA_API_HOST_PORT` keys from the ignored local `.env`; retained the display LAN binding and other active settings.
+
+#### How it went
+
+- `docker compose config --quiet`, both host health requests, container-to-gateway HTTP request, image ID comparison, diagnostics, bitmap format inspection, and post-restart health all passed. The expected initial gateway startup gap recovered on the normal refresh loop. No code test suite was rerun for the Dockerfile-only source change; the previous entry records the 170-test and lint pass for the application implementation.
+- The service has a current rendered image available for authenticated device polling. There was no USB device provisioning, firmware flash, physical display fetch, or panel observation in this task.
+
+#### Next steps
+
+1. Provision and connect the physical display, then verify authenticated image fetch, panel output, acknowledgement, and recovery from network loss on the real unit.
+2. If old HA data is no longer needed, deliberately remove the two unused HA-only Docker volumes after confirming no rollback requirement.
