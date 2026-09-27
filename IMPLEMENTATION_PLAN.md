@@ -3272,3 +3272,27 @@ This plan assumes the selected separate-LAN-host Home Assistant setup, one XIAO 
 
 1. Provision and connect the physical display, then verify authenticated image fetch, panel output, acknowledgement, and recovery from network loss on the real unit.
 2. If old HA data is no longer needed, deliberately remove the two unused HA-only Docker volumes after confirming no rollback requirement.
+
+### 2026-09-27 — Prepare the XIAO firmware for USB upload
+
+#### Evidence and findings
+
+- The user confirmed that the target is the XIAO ESP32-S3 800×480 e-paper kit used by the `lectio_s3` PlatformIO environment. The current environment extends the Seeed XIAO ESP32-S3 board profile; its installed board definition enables USB CDC on boot. The firmware's provisioning protocol uses that serial channel at 115200 baud.
+- `pio run -d firmware -e lectio_s3` succeeded in 64.94 seconds from branch `codex/direct-lectio-display` at `19c5a1d`. It built `firmware/.pio/build/lectio_s3/firmware.bin` and `merged_firmware.bin`; the merged image is 1,238,160 bytes with SHA-256 `f4e37e0c6200d53b8c30a5f689de3eda32bc3ef3a77e4347989d4d30d3edeffa`. Reported usage was 54,232/327,680 bytes RAM and 1,172,201/1,900,544 bytes application flash. Dependency warnings were non-fatal. This is a local compile, not a device flash.
+- PlatformIO, Python, and pyserial are available on the Windows host. `python -m tools.provision.provision_device --help` succeeded. GNU Make is absent, so the Python module is the available host entrypoint. The provisioner can run the PlatformIO upload, register a device credential in the running display service, prompt privately for Wi-Fi settings, write them over USB, and check authenticated service contact.
+- The local display service returned health `ok` at `http://192.168.1.29:8001`; gateway diagnostics reported an authenticated Lectio session, four valid sources, and an available bitmap. The firmware can be provisioned with that LAN URL once the board and its Wi-Fi can reach it.
+- Serial enumeration and Windows Ports devices showed only Bluetooth COM4 and COM5; no XIAO USB/serial port was detected. The user said they need more time to connect the board. No upload port has been selected, and no flash, USB provisioning, network fetch from the board, or panel update was performed.
+
+#### Tasks completed
+
+- Confirmed the `lectio_s3` target, built the firmware, checked the generated artifact and hash, confirmed host provisioning tools and service readiness, and identified the missing USB connection.
+- Prepared the host command for when a real XIAO port appears: `python -m tools.provision.provision_device --port COMx --server-url http://192.168.1.29:8001 --flash`. It will prompt for the Wi-Fi name and password; no credentials need to be placed in the command line.
+
+#### How it went
+
+- Firmware compilation and provisioning CLI inspection passed. Repository source was not changed for this preparation task. The board could not be probed because it was not connected, so upload and hardware behavior remain unverified.
+
+#### Next steps
+
+1. Connect the XIAO with a USB data cable and identify its new serial port, excluding Bluetooth COM4/COM5; if needed, use the board's bootloader mode to expose the upload port.
+2. When the user is ready to upload, run the prepared provisioning command with the detected port, enter the board's Wi-Fi details through its prompts, and verify authenticated service contact and the physical panel image.
