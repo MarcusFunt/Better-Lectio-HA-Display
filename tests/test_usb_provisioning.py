@@ -1,11 +1,18 @@
 import json
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from tools.provision import provision_device
 from tools.provision.protocol import encode_configuration
+
+
+def test_make_provision_device_target_uses_module_and_forwards_arguments():
+    makefile = Path(__file__).resolve().parents[1] / "Makefile"
+
+    assert "provision-device:\n\t$(PYTHON) -m tools.provision.provision_device $(ARGS)" in makefile.read_text()
 
 
 def _configuration(**updates):

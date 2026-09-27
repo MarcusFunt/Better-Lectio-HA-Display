@@ -2,7 +2,6 @@ import asyncio
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
-from display_service.entity_config import HomeAssistantEntityConfig
 from display_service.main import DisplayBackend, app
 from display_service.model import DisplayModel
 from display_service.model_builder import build_display_model
@@ -70,15 +69,14 @@ def test_authenticated_device_acknowledges_fresh_plan_changes(tmp_path):
         previous_backend = getattr(app.state, "display_backend", None)
         backend = DisplayBackend(tmp_path)
         credential = backend.devices.create("Test display", device_id="test-display")
-        config = HomeAssistantEntityConfig(private_calendar_entity_ids=())
-        fresh = {config.lectio_calendar_entity_id: SourceStatus(state="valid")}
+        fresh = {"schedule": SourceStatus(state="valid")}
         now = datetime(2026, 9, 25, 7, 0, tzinfo=ZoneInfo("Europe/Copenhagen"))
         first = build_display_model(
             now=now,
             lectio_events=[
                 {
-                    "uid": "lesson-1",
-                    "summary": "Math",
+                    "id": "lesson-1",
+                    "subject": "Math",
                     "start": "2026-09-25T09:00:00+02:00",
                     "end": "2026-09-25T09:45:00+02:00",
                 }
@@ -88,15 +86,15 @@ def test_authenticated_device_acknowledges_fresh_plan_changes(tmp_path):
             now=now,
             lectio_events=[
                 {
-                    "uid": "lesson-1",
-                    "summary": "Math moved",
+                    "id": "lesson-1",
+                    "subject": "Math moved",
                     "start": "2026-09-25T10:00:00+02:00",
                     "end": "2026-09-25T10:45:00+02:00",
                 }
             ],
         )
-        backend.changes.update(first, fresh, config)
-        pending = backend.changes.update(changed, fresh, config)
+        backend.changes.update(first, fresh)
+        pending = backend.changes.update(changed, fresh)
         backend._last_model = changed
         original = backend.images.publish(
             render_display_model(

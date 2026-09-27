@@ -8,10 +8,6 @@ services:
     restart: unless-stopped
     environment:
       LECTIO_DATA_DIR: /var/lib/better-lectio
-      HOME_ASSISTANT_CONFIG_DIR: /var/lib/better-lectio-ha-setup
-      LECTIO_HA_API_AUTH_DIR: /var/lib/better-lectio-api-auth
-      LECTIO_HA_API_BIND_ADDRESS: ${LECTIO_HA_API_BIND_ADDRESS:-127.0.0.1}
-      LECTIO_HA_API_HOST_PORT: ${LECTIO_HA_API_HOST_PORT:-8002}
       LECTIO_AUTH_BROWSER_URL: http://${COMPOSE_PROJECT_NAME:-better-lectio-ha-display}-lectio-auth-browser:8765
       LECTIO_AUTH_LIFECYCLE_URL: http://lectio-auth-lifecycle:8766
       LECTIO_AUTH_BROWSER_VIEW_URL: ${LECTIO_AUTH_BROWSER_VIEW_URL:-http://localhost:6080/vnc.html?autoconnect=true&resize=scale}
@@ -21,8 +17,6 @@ services:
       TZ: ${TIMEZONE:-Europe/Copenhagen}
     volumes:
       - lectio-gateway-data:/var/lib/better-lectio
-      - ha-display-config:/var/lib/better-lectio-ha-setup
-      - lectio-ha-api-auth:/var/lib/better-lectio-api-auth
     expose:
       - "8000"
     ports:
@@ -42,45 +36,6 @@ services:
         - python
         - -c
         - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"
-      interval: 30s
-      timeout: 3s
-      retries: 3
-      start_period: 10s
-
-  lectio-ha-api:
-    build:
-      context: ./services/lectio-gateway
-    command:
-      - uvicorn
-      - lectio_gateway.ha_api:app
-      - --host
-      - 0.0.0.0
-      - --port
-      - "8001"
-    init: true
-    restart: unless-stopped
-    environment:
-      LECTIO_HA_API_GATEWAY_URL: http://lectio-gateway:8000
-      LECTIO_HA_API_TOKEN: ${LECTIO_HA_API_TOKEN:-}
-      LECTIO_HA_API_AUTH_DIR: /var/lib/better-lectio-api-auth
-      TZ: ${TIMEZONE:-Europe/Copenhagen}
-    volumes:
-      - lectio-ha-api-auth:/var/lib/better-lectio-api-auth:ro
-    expose:
-      - "8001"
-    ports:
-      - "${LECTIO_HA_API_BIND_ADDRESS:-127.0.0.1}:${LECTIO_HA_API_HOST_PORT:-8002}:8001"
-    networks:
-      - default
-    depends_on:
-      lectio-gateway:
-        condition: service_healthy
-    healthcheck:
-      test:
-        - CMD
-        - python
-        - -c
-        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health', timeout=2)"
       interval: 30s
       timeout: 3s
       retries: 3
@@ -148,18 +103,10 @@ services:
     restart: unless-stopped
     environment:
       DISPLAY_DATA_DIR: /var/lib/better-lectio-display
-      HOME_ASSISTANT_CONFIG_DIR: /var/lib/better-lectio-ha-setup
-      HOME_ASSISTANT_URL: ${HOME_ASSISTANT_URL:-}
-      HOME_ASSISTANT_TOKEN: ${HOME_ASSISTANT_TOKEN:-}
-      HA_LECTIO_CALENDAR: ${HA_LECTIO_CALENDAR:-calendar.lectio}
-      HA_PRIVATE_CALENDARS: ${HA_PRIVATE_CALENDARS-calendar.private}
-      HA_ASSIGNMENTS_TODO: ${HA_ASSIGNMENTS_TODO:-todo.lectio_assignments}
-      HA_HOMEWORK_TODO: ${HA_HOMEWORK_TODO:-todo.lectio_homework}
-      HA_CANCELLATIONS_SENSOR: ${HA_CANCELLATIONS_SENSOR:-sensor.lectio_cancellations}
+      LECTIO_GATEWAY_URL: http://lectio-gateway:8000
       TZ: ${TIMEZONE:-Europe/Copenhagen}
     volumes:
       - display-service-data:/var/lib/better-lectio-display
-      - ha-display-config:/var/lib/better-lectio-ha-setup:ro
     expose:
       - "8000"
     ports:
@@ -213,8 +160,6 @@ services:
 volumes:
   lectio-gateway-data:
   display-service-data:
-  ha-display-config:
-  lectio-ha-api-auth:
 
 networks:
   default:

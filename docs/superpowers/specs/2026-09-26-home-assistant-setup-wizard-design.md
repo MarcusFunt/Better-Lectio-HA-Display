@@ -1,7 +1,7 @@
 # Home Assistant Setup Wizard on the Lectio Login Page
 
 **Date:** 2026-09-26  
-**Status:** Approved by the user on 2026-09-26
+**Status:** Superseded on 2026-09-27 by the direct Lectio Gateway → Display Service architecture in `ARCHITECTURE_AND_OPERATIONS.md`. Retained as historical design context.
 **Requested outcome:** Configure the largest practical share of Home Assistant setup from the existing Lectio login page.
 
 ## Goals

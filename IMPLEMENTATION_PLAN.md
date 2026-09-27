@@ -1,10 +1,10 @@
 # Better Lectio HA Display — Implementation Plan
 
-**Status:** Implementation roadmap  
+**Status:** Historical implementation roadmap; Home Assistant milestones were superseded on 2026-09-27. The dated Agent execution log below remains the canonical progress and evidence record.
 **Date:** 2026-09-25  
 **Target repository:** `MarcusFunt/Better-Lectio-HA-Display`
 
-This plan implements the architecture defined in `ARCHITECTURE_AND_OPERATIONS.md`.
+The older milestones below record the original Home Assistant design. Current architecture and next steps are in `ARCHITECTURE_AND_OPERATIONS.md` and the latest dated Agent execution log entry. Historical execution entries are preserved without retroactive edits.
 
 The order is deliberately chosen to validate the riskiest integration boundaries early and to prevent the renderer, Home Assistant integration, and firmware from becoming coupled to temporary authentication details.
 
@@ -3168,3 +3168,81 @@ This plan assumes the selected separate-LAN-host Home Assistant setup, one XIAO 
 3. Connect the supported XIAO board, confirm its COM port and KEY3 button, then flash/provision using `python -m tools.provision.provision_device --port COMx --server-url http://<server-lan-ip>:8001 --ssid "<wifi-name>" --name "Better Lectio display" --flash`.
 4. Exercise an add/change/remove private-calendar test event and the short-press acknowledgement, then optionally stop/start only `display-service` to confirm the panel retains its last image during service loss.
 5. Fix the `provision-device` Makefile entrypoint in a separate small follow-up before relying on that target; preserve this HITL run's current uncommitted changes.
+
+### 2026-09-27 — Fix USB provisioning target and prepare local environment
+
+#### Evidence and findings
+
+- The provisioning utility imports package-relative modules. Running it as a script (`python tools/provision/provision_device.py`) fails with `ImportError: attempted relative import with no known parent package`; invoking it as a module (`python -m tools.provision.provision_device --help`) succeeds.
+- The `provision-device` Make target used the failing script form and did not pass through CLI arguments. GNU Make is not available in the current Windows shell, so the target itself could not be invoked here.
+- `.env` was absent and `.env.example` contains non-secret defaults, including loopback binds for ports 8001 and 8002. The Compose host LAN IPv4 is not yet known; the user is retrieving it with `ipconfig`.
+
+#### Tasks completed
+
+- Updated `Makefile` so `provision-device` runs `python -m tools.provision.provision_device` and forwards caller-supplied `ARGS`.
+- Added a regression assertion in `tests/test_usb_provisioning.py` for the module invocation and argument forwarding.
+- Created the ignored local `.env` by copying `.env.example`. It currently retains loopback binds and contains no credentials; set both bind-address variables to the Compose host's reserved LAN IPv4 before enabling access from Home Assistant or the display.
+
+#### How it went
+
+- The regression test failed before the Makefile edit and passed afterward. The focused provisioning test file passed: **17 passed**. The package CLI `--help`, `docker compose config --quiet`, and `git diff --check` all exited successfully.
+- The full service test command could not collect because this host Python environment lacks project dependencies and editable packages, including `icalendar` and the service modules. The Home Assistant suite could not collect because `homeassistant` is not installed. Ruff is also not installed. These are environment/setup limitations; no unrelated dependencies were installed. No hardware, HA, or LAN connectivity was exercised.
+- `.env` is intentionally ignored by Git. Keep secrets out of it; the scoped API and Home Assistant credentials are entered through the existing setup flow.
+
+#### Next steps
+
+1. Put the Compose host's private LAN IPv4 in `LECTIO_HA_API_BIND_ADDRESS` and `DISPLAY_BIND_ADDRESS`; retain ports 8002 and 8001, respectively.
+2. Add host firewall rules for TCP 8002 from the Home Assistant host and TCP 8001 from the display/LAN, then restart/recreate the Compose services and verify the endpoints from their clients.
+3. Continue the HITL setup with the HA integration and credentials, render a fresh bitmap, and then connect/flash/provision the physical display as recorded above.
+
+### 2026-09-27 — Rebuild runtime and audit HITL configuration
+
+#### Evidence and findings
+
+- The local `main` HEAD (`34d03ef`, `USB_Provisioning`) matched `origin/main` when checked. The Compose host `.env` now has the same private LAN address set for both service bind variables, with host ports 8001 and 8002.
+- Rebuilt all five default Compose service images from this checkout and force-recreated the containers. Each running container's image ID matches its current local `:latest` image; all five services report healthy. Gateway, display-service, and HA API health requests returned `ok`.
+- The setup endpoint reports valid managed display settings, a saved HA-reachable gateway API URL, a configured scoped API token digest, and a host-scoped HA API bind at port 8002. This does not prove the Better Lectio integration has been installed/configured in Home Assistant; that state is outside the gateway's setup store.
+- The managed display connection is configured to use `homeassistant.local:8123`, but its status is `unreachable`. That hostname resolves from the display container, while TCP connection to Home Assistant port 8123 times out both from the container and the Compose host. The display has no rendered bitmap.
+- Lectio remains authenticated with a student ID available. Source states report valid/not stale, but their last successful sync timestamps are still 2026-09-25; no newer source refresh was observed during this audit.
+
+#### Tasks completed
+
+- Compared local `main` with the remote `main` commit and rebuilt/recreated the current default Compose stack from the local checkout.
+- Rechecked running image IDs, container health, the saved setup fields (excluding credentials), auth/source diagnostics, and host/container TCP reachability to Home Assistant.
+
+#### How it went
+
+- All default containers came up healthy on the newly built images. The environment's saved Compose host address and API URL agree. HA itself is not reachable on the configured URL/port from either tested origin, so the next failure is network reachability or an incorrect/stale HA address, not a failed Compose build. No secrets were read or printed. No HA integration installation, fresh Lectio sync, rendered bitmap, or hardware path was verified.
+
+#### Next steps
+
+1. Confirm Home Assistant's current LAN IPv4 and that its web UI is reachable from the Compose host on port 8123. If it is, update the display connection URL in the setup page to that address and investigate host/VLAN firewall rules if the container still times out.
+2. Trigger/confirm a new Lectio source sync and verify that the display setup state becomes connected and the diagnostics endpoint reports an available rendered bitmap.
+3. Confirm the Better Lectio integration is installed/configured in Home Assistant, then continue the USB provisioning and physical panel/change-acknowledgement checks.
+
+### 2026-09-27 — Remove Home Assistant from the display pipeline
+
+#### Evidence and findings
+
+- Read every repository Markdown file recursively before implementation. The checkout began on `main` at `34d03ef` with existing local edits to this plan, the `provision-device` Make target, and its regression test. Those edits were preserved on `codex/direct-lectio-display`.
+- The gateway already exposed normalized, unchanged `/api/v1/status`, `/schedule`, `/assignments`, `/homework`, and `/cancellations` responses with per-source sync metadata. The display previously read HA calendar/todo/sensor entities and HA setup files. The gateway depends on display diagnostics, which depends on display service, so a display-to-gateway Compose `depends_on` edge would create a startup cycle.
+- The Compose project keeps its historical default name so existing gateway and display data volumes stay attached. HA-only service, configuration, and token volumes are no longer part of Compose; old ignored host `.env` keys are not consumed by the new services.
+
+#### Tasks completed
+
+- Added a validated, credential-free private-network gateway client configured by `LECTIO_GATEWAY_URL` (default `http://lectio-gateway:8000`). The display service now requests each source on the Copenhagen three-day window, maps normalized Lectio fields, keeps independent last-good source items/freshness, renders the bitmap, and retains the exact previous bitmap when the schedule is stale, incomplete, or unavailable.
+- Kept persistent hashed change review, content-addressed images, authenticated device API, provisioning, and firmware protocol. Source keys are now `schedule`, `assignments`, `homework`, and `cancellations`; retired HA review keys are pruned on load, and private-calendar input was removed.
+- Removed HA setup routes/UI/diagnostics, HA API proxy/token stores, HA display settings/entity roles, HACS integration and its tests/CI job, HA-only Compose services/variables/volumes, and the private-calendar renderer snapshot. Retained Lectio sign-in, source diagnostics, and bitmap preview.
+- Updated README and architecture decisions for the direct pipeline and marked both HA design specs superseded. Historical execution-log entries above remain intact.
+
+#### How it went
+
+- New client, model, backend, Compose, environment, and CI checks cover endpoint paths and date bounds, response/failure classification, Lectio mapping and ordering, sidebar priority, stale-source fallback, and bitmap retention. A malformed-JSON regression first failed with the old classification and passed after the correction. Read-only review found cancelled lessons, partial-week schedule replacement, submitted assignment statuses, and retired review-state keys; focused regressions failed first and passed after fixes.
+- In a disposable Python 3.12 CI-equivalent container, `make test` passed **170 tests** and `make lint` passed. `docker compose config --quiet` passed, and `docker compose --profile auth-browser build --quiet` built all five active service images. Python compilation passed. These are software/fixture checks; no live Lectio refresh, MitID flow, deployed Compose recreation, firmware flash, USB provisioning, or physical display transmission was verified in this task.
+- The first lint run found import-spacing issues; they were fixed before the passing run. The host Python 3.11 lacks the renderer font and some service dependencies, so the container run is the authoritative full-suite result.
+
+#### Next steps
+
+1. Apply the new Compose stack on the host with orphan removal, preserving the two active data volumes; confirm that the gateway source diagnostics refresh and the bitmap preview becomes available.
+2. Provision the physical device over USB and verify authenticated bitmap fetch, visible rendering, acknowledgement, and recovery from a brief network loss. The board/button mapping still requires hardware confirmation.
+3. After confirming the migration, remove any retired HA-only Docker volumes or old host secrets through a deliberate host cleanup.

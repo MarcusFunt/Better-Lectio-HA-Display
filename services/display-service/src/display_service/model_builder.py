@@ -29,23 +29,18 @@ def build_display_model(
     *,
     now: datetime | None = None,
     lectio_events: Sequence[Mapping[str, Any]] = (),
-    private_events: Sequence[Mapping[str, Any]] = (),
     assignments: Sequence[Mapping[str, Any]] = (),
     homework: Sequence[Mapping[str, Any]] = (),
     cancellations: Sequence[Mapping[str, Any]] = (),
     max_sidebar_items: int = 8,
 ) -> DisplayModel:
-    """Create a stable three-day model from normalized HA response data."""
+    """Create a stable three-day model from normalized Lectio data."""
     if max_sidebar_items < 0:
         raise ValueError("max_sidebar_items cannot be negative")
     local_now = _local_datetime(now or datetime.now(DISPLAY_TIMEZONE))
     _, _, days = display_window(local_now)
     event_by_day: dict[date, list[DisplayEvent]] = {day: [] for day in days}
-    all_events = [
-        *(_calendar_event(item, "lectio") for item in lectio_events),
-        *(_calendar_event(item, "private") for item in private_events),
-    ]
-    for event in all_events:
+    for event in (_calendar_event(item) for item in lectio_events):
         if event is None:
             continue
         for day in days:
@@ -73,9 +68,9 @@ def build_display_model(
     )
 
 
-def _calendar_event(
-    item: Mapping[str, Any], source: str
-) -> DisplayEvent | None:
+def _calendar_event(item: Mapping[str, Any]) -> DisplayEvent | None:
+    if (_text(item.get("status")) or "").casefold() == "cancelled":
+        return None
     start = _parse_time(item.get("start"))
     end = _parse_time(item.get("end"))
     if start is None or end is None or type(start) is not type(end):
@@ -83,36 +78,27 @@ def _calendar_event(
     if _instant(end) <= _instant(start):
         return None
 
-    title = _text(item.get("summary")) or "Untitled event"
-    description = _text(item.get("description"))
-    teacher = _text(item.get("teacher")) or _teacher_from_description(description)
-    room = _text(item.get("room")) or _text(item.get("location"))
-    source_id = _text(item.get("uid")) or _text(item.get("id"))
+    title = _text(item.get("subject")) or "Untitled lesson"
+    teacher = _text(item.get("teacher"))
+    room = _text(item.get("room"))
+    source_id = _text(item.get("id"))
     if source_id is None:
         identity = "\x1f".join(
             (
-                _text(item.get("_display_calendar_entity_id")) or "",
-                source,
                 title,
                 _temporal_key(start),
                 _temporal_key(end),
-                description or "",
+                _text(item.get("details")) or "",
                 room or "",
             )
         )
         source_id = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:20]
-    calendar_entity_id = _text(item.get("_display_calendar_entity_id"))
-    stable_id = (
-        f"{source}:{calendar_entity_id}:{source_id}"
-        if calendar_entity_id
-        else f"{source}:{source_id}"
-    )
     return DisplayEvent(
-        id=stable_id,
+        id=f"lectio:{source_id}",
         start=start,
         end=end,
         title=title,
-        source=source,  # type: ignore[arg-type]
+        source="lectio",
         all_day=isinstance(start, date) and not isinstance(start, datetime),
         teacher=teacher,
         room=room,
@@ -185,10 +171,9 @@ def _cancellation_item(
 def _todo_sidebar_item(
     item: Mapping[str, Any], *, kind: str
 ) -> SidebarItem | None:
-    when = _parse_time(item.get("due"))
+    when = _parse_time(item.get("target_lesson_start") if kind == "homework" else item.get("due"))
     title = (
-        _text(item.get("summary"))
-        or _text(item.get("title"))
+        _text(item.get("title"))
         or _text(item.get("subject"))
         or _text(item.get("description"))
     )
@@ -200,7 +185,7 @@ def _todo_sidebar_item(
         priority = 1
         source = "assignments"
     else:
-        subtitle = _text(item.get("subject")) or _text(item.get("description"))
+        subtitle = _text(item.get("description")) or _text(item.get("subject"))
         priority = 2
         source = "homework"
     return SidebarItem(
@@ -229,27 +214,22 @@ def _homework_sidebar_item(
 
 def _is_completed(item: Mapping[str, Any]) -> bool:
     status = _text(item.get("status"))
-    return status is not None and status.casefold() in {"completed", "done"}
+    return status is not None and status.casefold() in {
+        "completed", "done", "submitted", "afleveret", "afsluttet"
+    }
 
 
 def _source_id(item: Mapping[str, Any]) -> str:
-    identifier = _text(item.get("uid")) or _text(item.get("id")) or _text(
+    identifier = _text(item.get("id")) or _text(
         item.get("source_id")
     )
     if identifier is not None:
         return identifier
     stable_fields = "\x1f".join(
         str(item.get(key) or "")
-        for key in ("summary", "title", "subject", "description", "due", "start")
+        for key in ("title", "subject", "description", "due", "target_lesson_start", "start")
     )
     return hashlib.sha256(stable_fields.encode("utf-8")).hexdigest()[:20]
-
-
-def _teacher_from_description(description: str | None) -> str | None:
-    if description is None:
-        return None
-    match = re.search(r"(?:^|\n)Teacher:\s*([^\n]+)", description, re.IGNORECASE)
-    return _text(match.group(1)) if match else None
 
 
 def _parse_time(value: Any) -> DisplayTime | None:

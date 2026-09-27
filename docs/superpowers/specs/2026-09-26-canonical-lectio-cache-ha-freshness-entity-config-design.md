@@ -1,7 +1,7 @@
 # Canonical Lectio Cache, HA Freshness, and Entity Configuration
 
 **Date:** 2026-09-26
-**Status:** Approved by the user on 2026-09-26; implementation has not started.
+**Status:** Superseded on 2026-09-27 by the direct Lectio Gateway → Display Service architecture in `ARCHITECTURE_AND_OPERATIONS.md`. Retained as historical design context.
 
 ## Goals
 

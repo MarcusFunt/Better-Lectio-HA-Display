@@ -19,7 +19,6 @@ _SNAPSHOTS = Path(__file__).with_name("snapshots")
         "dense",
         "no_events",
         "long_labels",
-        "mixed_calendars",
         "cancellation_heavy",
         "assignment_heavy",
         "homework_fallback",
@@ -43,7 +42,6 @@ def _scenarios() -> dict[str, DisplayModel]:
         "dense": _dense_model(),
         "no_events": _model(),
         "long_labels": _long_label_model(),
-        "mixed_calendars": _mixed_model(),
         "cancellation_heavy": _sidebar_model("cancellation"),
         "assignment_heavy": _sidebar_model("assignment"),
         "homework_fallback": _homework_model(),
@@ -60,7 +58,7 @@ def _normal_model() -> DisplayModel:
             ),
             _day(
                 _DATES[1],
-                _event("dentist", 14, 0, "Dentist", source="private", event_date=_DATES[1]),
+                _event("dentist", 14, 0, "Dentist", event_date=_DATES[1]),
             ),
             _day(
                 _DATES[2],
@@ -131,23 +129,6 @@ def _long_label_model() -> DisplayModel:
     )
 
 
-def _mixed_model() -> DisplayModel:
-    return _model(
-        (
-            _day(
-                _DATES[0],
-                _event("private-1", 8, 0, "Dentist", source="private"),
-                _event("lectio-1", 9, 0, "History", teacher="M. Jensen", room="3.12"),
-                _event("private-2", 12, 30, "Family appointment", source="private"),
-                _event("lectio-2", 14, 0, "Physics", teacher="A. Nielsen", room="1.65"),
-            ),
-            _day(_DATES[1]),
-            _day(_DATES[2]),
-        ),
-        (),
-    )
-
-
 def _sidebar_model(kind: str) -> DisplayModel:
     if kind == "cancellation":
         items = tuple(
@@ -210,7 +191,6 @@ def _event(
     minute: int,
     title: str,
     *,
-    source: str = "lectio",
     teacher: str | None = None,
     room: str | None = None,
     all_day: bool = False,
@@ -237,7 +217,7 @@ def _event(
         start=start_value,
         end=end_value,
         title=title,
-        source=source,
+        source="lectio",
         all_day=all_day,
         teacher=teacher,
         room=room,

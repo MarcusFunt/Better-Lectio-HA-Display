@@ -8,7 +8,7 @@ from typing import Literal
 
 DisplayTime = date | datetime
 SidebarKind = Literal["cancellation", "assignment", "homework"]
-EventSource = Literal["lectio", "private"]
+EventSource = Literal["lectio"]
 
 
 @dataclass(frozen=True, slots=True)

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "better-lectio-display-service"
 version = "0.1.0"
-description = "Home Assistant-backed e-paper display service"
+description = "Lectio-backed e-paper display service"
 requires-python = ">=3.12"
 dependencies = [
     "aiohttp>=3.11,<4",

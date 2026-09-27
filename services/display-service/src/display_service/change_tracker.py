@@ -11,9 +11,10 @@ from datetime import date, datetime, time, timezone
 from pathlib import Path
 from typing import Any
 
-from .entity_config import HomeAssistantEntityConfig
 from .model import DisplayEvent, DisplayModel, SidebarItem
 from .model_service import SourceStatus
+
+_ACTIVE_SOURCES = {"schedule", "assignments", "homework", "cancellations"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,7 +31,7 @@ class DisplayChangeSummary:
 
 
 class DisplayChangeTracker:
-    """Compare fresh HA data with a persistent, per-source acknowledged view.
+    """Compare fresh Lectio data with a persistent, per-source acknowledged view.
 
     The state file stores one-way hashes of item identities and content, never
     event titles or descriptions. Stale sources are not compared, so cached or
@@ -47,6 +48,12 @@ class DisplayChangeTracker:
             # a new baseline that could hide pending changes.
             self._state = _empty_state()
             self.available = False
+        for group in ("acknowledged", "current"):
+            self._state[group] = {
+                key: value
+                for key, value in self._state[group].items()
+                if key in _ACTIVE_SOURCES
+            }
         self._fresh_sources: set[str] = set()
 
     @property
@@ -61,12 +68,10 @@ class DisplayChangeTracker:
         self,
         model: DisplayModel,
         sources: dict[str, SourceStatus],
-        entity_config: HomeAssistantEntityConfig | None = None,
     ) -> DisplayChangeSummary:
         if not self.available:
             raise RuntimeError("Plan review state is unavailable")
-        config = entity_config or HomeAssistantEntityConfig()
-        current = _snapshot(model, config)
+        current = _snapshot(model)
         fresh_sources = {
             entity_id
             for entity_id, status in sources.items()
@@ -148,17 +153,14 @@ class DisplayChangeTracker:
             temporary_path.unlink(missing_ok=True)
 
 
-def _snapshot(
-    model: DisplayModel, config: HomeAssistantEntityConfig
-) -> dict[str, dict[str, dict[str, str | bool | None]]]:
+def _snapshot(model: DisplayModel) -> dict[str, dict[str, dict[str, str | bool | None]]]:
     result: dict[str, dict[str, dict[str, str | bool | None]]] = {}
     for day in model.days:
         for event in day.events:
-            entity_id = _calendar_entity_id(event, config)
-            if entity_id is not None:
+            if event.source == "lectio":
                 _add_item(
                     result,
-                    entity_id,
+                    "schedule",
                     event.id,
                     _event_fingerprint(event),
                     _event_expiry(event),
@@ -173,17 +175,11 @@ def _snapshot(
                         )
                     ),
                 )
-    sidebar_entities = {
-        "assignments": config.assignments_entity_id,
-        "homework": config.homework_entity_id,
-        "cancellations": config.cancellations_entity_id,
-    }
     for item in model.sidebar:
-        entity_id = sidebar_entities.get(item.source)
-        if entity_id is not None:
+        if item.source in {"assignments", "homework", "cancellations"}:
             _add_item(
                 result,
-                entity_id,
+                item.source,
                 item.id,
                 _sidebar_fingerprint(item),
                 _sidebar_expiry(item),
@@ -207,20 +203,6 @@ def _add_item(
         "expires_on": expires_on,
         "expires_inclusive": expires_inclusive,
     }
-
-
-def _calendar_entity_id(
-    event: DisplayEvent, config: HomeAssistantEntityConfig
-) -> str | None:
-    if event.source == "lectio":
-        return config.lectio_calendar_entity_id
-    prefix, separator, remainder = event.id.partition(":")
-    if prefix != "private" or not separator:
-        return None
-    entity_id, separator, _ = remainder.partition(":")
-    if separator and entity_id in config.private_calendar_entity_ids:
-        return entity_id
-    return None
 
 
 def _event_fingerprint(event: DisplayEvent) -> str:

@@ -1,15 +1,13 @@
-"""HTTP API and lifecycle for the Home Assistant-backed display service."""
+"""HTTP API and lifecycle for the direct Lectio display service."""
 
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
 import re
 import time
 from contextlib import asynccontextmanager, suppress
-from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import Body, FastAPI, HTTPException, Request
@@ -17,81 +15,33 @@ from starlette.responses import Response
 
 from .change_tracker import DisplayChangeSummary, DisplayChangeTracker
 from .device_registry import DeviceRecord, DeviceRegistry
-from .entity_config import HomeAssistantEntityConfig
-from .ha_client import HomeAssistantClient
+from .gateway_client import LectioGatewayClient
 from .image_store import DisplayImageStore
 from .model import DisplayModel
 from .model_service import DisplayModelService
-from .renderer import mark_display_stale, render_display_model
-from .setup_config import (
-    HomeAssistantDisplaySettings,
-    HomeAssistantDisplaySettingsStore,
-)
+from .renderer import render_display_model
 
 _LOGGER = logging.getLogger(__name__)
 _DEFAULT_REFRESH_SECONDS = 30
-_HOME_ASSISTANT_SETUP_FILENAME = "home-assistant-setup.json"
 _CONTENT_HASH_PATTERN = re.compile(r"^[a-f0-9]{64}$")
 
 
 class DisplayBackend:
     """Coordinate model refresh, rendering, persistent content, and devices."""
 
-    def __init__(
-        self,
-        data_dir: Path,
-        entity_config: HomeAssistantEntityConfig | None = None,
-    ) -> None:
+    def __init__(self, data_dir: Path) -> None:
         self.devices = DeviceRegistry(data_dir)
         self.images = DisplayImageStore(data_dir)
         self.changes = DisplayChangeTracker(data_dir / "plan-review.json")
-        self._setup_status_path = data_dir / _HOME_ASSISTANT_SETUP_FILENAME
-        self._entity_config = entity_config or HomeAssistantEntityConfig()
         self._models: DisplayModelService | None = None
         self._refresh_lock = asyncio.Lock()
         self._next_refresh_at = 0.0
         self._last_model: DisplayModel | None = None
         self._last_data_stale = False
-        self.set_home_assistant_setup_state("not_configured")
 
-    def set_home_assistant(
-        self,
-        client: HomeAssistantClient,
-        entity_config: HomeAssistantEntityConfig | None = None,
-    ) -> None:
-        if entity_config is not None:
-            self._entity_config = entity_config
-        self._models = DisplayModelService(client, entity_config=self._entity_config)
+    def set_gateway(self, client: LectioGatewayClient) -> None:
+        self._models = DisplayModelService(client)
         self._next_refresh_at = 0.0
-        self.set_home_assistant_setup_state("checking")
-
-    def clear_home_assistant(self, state: str) -> None:
-        self._models = None
-        self._next_refresh_at = 0.0
-        self.set_home_assistant_setup_state(state)
-        self._mark_current_image_stale()
-
-    def set_home_assistant_setup_state(self, state: str) -> None:
-        """Persist a safe, allowlisted Home Assistant setup state for diagnostics."""
-        allowed_states = {
-            "not_configured",
-            "invalid_configuration",
-            "checking",
-            "connected",
-            "unauthorized",
-            "unreachable",
-            "entity_problem",
-            "partial_error",
-        }
-        if state not in allowed_states:
-            state = "unavailable"
-        payload: dict[str, str] = {"state": state}
-        if state not in {"not_configured", "checking"}:
-            payload["last_checked_at"] = datetime.now(timezone.utc).isoformat()
-        self._setup_status_path.parent.mkdir(parents=True, exist_ok=True)
-        temporary_path = self._setup_status_path.with_suffix(".tmp")
-        temporary_path.write_text(json.dumps(payload), encoding="utf-8")
-        temporary_path.replace(self._setup_status_path)
 
     async def refresh_if_due(self) -> None:
         """Refresh at most once per polling interval; preserve the last good BMP."""
@@ -105,47 +55,18 @@ class DisplayBackend:
             self._next_refresh_at = now + _DEFAULT_REFRESH_SECONDS
             try:
                 result = await models.async_build()
-                self.set_home_assistant_setup_state(
-                    _home_assistant_setup_state(result.sources.values())
-                )
-                usable = any(
-                    source.state in {"valid", "stale", "expired"}
-                    for source in result.sources.values()
-                )
-                if not usable:
-                    _LOGGER.warning("Display refresh skipped: no usable Home Assistant source")
-                    self._mark_current_image_stale()
-                    return
-                calendar_sources = {
-                    entity_id: source
-                    for entity_id, source in result.sources.items()
-                    if entity_id.startswith("calendar.")
-                }
-                usable_calendars = {
-                    entity_id
-                    for entity_id, source in calendar_sources.items()
-                    if source.state in {"valid", "stale", "expired"}
-                }
-                if not usable_calendars:
-                    _LOGGER.warning("Display refresh skipped: no usable calendar source")
-                    self._mark_current_image_stale()
-                    return
-                if self.images.current is not None and usable_calendars != set(calendar_sources):
-                    _LOGGER.warning(
-                        "Display refresh skipped: preserving image until all calendar sources are usable"
-                    )
-                    self._mark_current_image_stale()
+                schedule = result.sources["schedule"]
+                if schedule.state != "valid" or schedule.is_stale or all(
+                    source.error is not None for source in result.sources.values()
+                ):
+                    _LOGGER.warning("Display refresh skipped: Lectio gateway data unavailable")
                     return
                 data_stale = any(
                     source.state != "valid" or source.is_stale
                     for source in result.sources.values()
                 )
                 self._last_data_stale = data_stale
-                summary = self.changes.update(
-                    result.model,
-                    result.sources,
-                    self._entity_config,
-                )
+                summary = self.changes.update(result.model, result.sources)
                 self._last_model = result.model
                 bmp = render_display_model(
                     result.model,
@@ -159,13 +80,6 @@ class DisplayBackend:
                 raise
             except Exception as error:
                 code = getattr(error, "code", None)
-                self.set_home_assistant_setup_state(
-                    "unreachable" if code == "connection_failed" else "partial_error"
-                )
-                try:
-                    self._mark_current_image_stale()
-                except Exception:
-                    _LOGGER.warning("Could not mark the retained display image as stale")
                 _LOGGER.warning(
                     "Display refresh failed (%s)",
                     code if isinstance(code, str) else "refresh_failed",
@@ -196,17 +110,6 @@ class DisplayBackend:
             self.images.publish(bmp, self._last_model.generated_at)
             return summary
 
-    def _mark_current_image_stale(self) -> None:
-        current = self.images.current
-        if current is None:
-            return
-        bmp = self.images.read(current.content_hash)
-        if bmp is None:
-            return
-        stale_bmp = mark_display_stale(bmp)
-        self.images.publish(stale_bmp, datetime.now(timezone.utc))
-        self._last_data_stale = True
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -215,109 +118,24 @@ async def lifespan(app: FastAPI):
     )
     backend = DisplayBackend(data_dir)
     app.state.display_backend = backend
-    runtime = HomeAssistantRuntime(
-        backend,
-        Path(
-            os.getenv(
-                "HOME_ASSISTANT_CONFIG_DIR", "/var/lib/better-lectio-ha-setup"
-            )
-        ),
-        os.environ,
-    )
-    refresh_task = asyncio.create_task(_refresh_loop(backend, runtime))
-    try:
-        yield
-    finally:
-        refresh_task.cancel()
-        with suppress(asyncio.CancelledError):
-            await refresh_task
-        await runtime.close()
-
-
-class HomeAssistantRuntime:
-    """Apply config-file or legacy environment changes between refreshes."""
-
-    def __init__(self, backend: DisplayBackend, config_dir: Path, environ) -> None:
-        self.backend = backend
-        self.settings_store = HomeAssistantDisplaySettingsStore(config_dir)
-        self.environ = environ
-        self._settings: HomeAssistantDisplaySettings | None = None
-        self._client: HomeAssistantClient | None = None
-        self._invalid_configuration = False
-
-    async def reload_configuration(self) -> None:
+    async with LectioGatewayClient(os.getenv("LECTIO_GATEWAY_URL", "http://lectio-gateway:8000")) as client:
+        backend.set_gateway(client)
+        refresh_task = asyncio.create_task(_refresh_loop(backend))
         try:
-            settings = self.settings_store.load(self.environ)
-        except ValueError:
-            if self._invalid_configuration and self._client is None:
-                return
-            async with self.backend._refresh_lock:
-                await self._replace_client()
-                self._settings = None
-                self._invalid_configuration = True
-                self.backend.clear_home_assistant("invalid_configuration")
-            return
-
-        if settings == self._settings and not self._invalid_configuration:
-            return
-        async with self.backend._refresh_lock:
-            self._invalid_configuration = False
-            await self._replace_client()
-            self._settings = settings
-            if settings is None:
-                self.backend.clear_home_assistant("not_configured")
-                return
-
-            client: HomeAssistantClient | None = None
-            try:
-                client = HomeAssistantClient(settings.ha_url, settings.ha_token)
-                await client.__aenter__()
-            except ValueError:
-                if client is not None:
-                    await client.__aexit__(None, None, None)
-                self._invalid_configuration = True
-                self._settings = None
-                self.backend.clear_home_assistant("invalid_configuration")
-                return
-            self._client = client
-            self.backend.set_home_assistant(client, settings.entity_config)
-
-    async def _replace_client(self) -> None:
-        client = self._client
-        self._client = None
-        if client is not None:
-            await client.__aexit__(None, None, None)
-
-    async def close(self) -> None:
-        await self._replace_client()
+            yield
+        finally:
+            refresh_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await refresh_task
 
 
-async def _refresh_loop(
-    backend: DisplayBackend, runtime: HomeAssistantRuntime
-) -> None:
+async def _refresh_loop(backend: DisplayBackend) -> None:
     while True:
-        await runtime.reload_configuration()
         await backend.refresh_if_due()
         await asyncio.sleep(_DEFAULT_REFRESH_SECONDS)
 
 
 app = FastAPI(title="Better Lectio Display Service", lifespan=lifespan)
-
-
-def _home_assistant_setup_state(sources) -> str:
-    """Summarize source errors without including entity IDs or HA response data."""
-    error_codes = {
-        source.error for source in sources if isinstance(source.error, str)
-    }
-    if "unauthorized" in error_codes or "forbidden" in error_codes:
-        return "unauthorized"
-    if error_codes and error_codes <= {"connection_failed"}:
-        return "unreachable"
-    if error_codes & {"not_found", "entity_unavailable"}:
-        return "entity_problem"
-    if error_codes or any(source.state == "error" for source in sources):
-        return "partial_error"
-    return "connected"
 
 
 @app.get("/health", include_in_schema=False)

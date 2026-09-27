@@ -1,9 +1,9 @@
+import json
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
 import pytest
 from display_service.change_tracker import DisplayChangeTracker
-from display_service.entity_config import HomeAssistantEntityConfig
 from display_service.model_builder import build_display_model
 from display_service.model_service import SourceStatus
 
@@ -15,7 +15,7 @@ def _model(*, now, events=()):
 
 
 def _fresh():
-    return {"calendar.lectio": SourceStatus(state="valid")}
+    return {"schedule": SourceStatus(state="valid")}
 
 
 def test_change_tracker_detects_and_persists_changes_until_acknowledged(tmp_path):
@@ -26,8 +26,8 @@ def test_change_tracker_detects_and_persists_changes_until_acknowledged(tmp_path
         now=now,
         events=[
             {
-                "uid": "lesson-1",
-                "summary": "Math",
+                "id": "lesson-1",
+                "subject": "Math",
                 "start": "2026-09-25T09:00:00+02:00",
                 "end": "2026-09-25T09:45:00+02:00",
             }
@@ -40,8 +40,8 @@ def test_change_tracker_detects_and_persists_changes_until_acknowledged(tmp_path
         now=now,
         events=[
             {
-                "uid": "lesson-1",
-                "summary": "Math moved",
+                "id": "lesson-1",
+                "subject": "Math moved",
                 "start": "2026-09-25T10:00:00+02:00",
                 "end": "2026-09-25T10:45:00+02:00",
             }
@@ -67,8 +67,8 @@ def test_persisted_change_state_does_not_store_event_text_or_source_ids(tmp_path
         now=datetime(2026, 9, 25, 7, 0, tzinfo=TZ),
         events=[
             {
-                "uid": "private-source-record-identifier",
-                "summary": "Private family appointment text",
+                "id": "secret-source-record-identifier",
+                "subject": "Secret lesson text",
                 "start": "2026-09-26T09:00:00+02:00",
                 "end": "2026-09-26T09:45:00+02:00",
             }
@@ -78,8 +78,8 @@ def test_persisted_change_state_does_not_store_event_text_or_source_ids(tmp_path
     tracker.update(model, _fresh())
     stored = path.read_text(encoding="utf-8")
 
-    assert "Private family appointment text" not in stored
-    assert "private-source-record-identifier" not in stored
+    assert "Secret lesson text" not in stored
+    assert "secret-source-record-identifier" not in stored
 
 
 def test_unreadable_review_state_disables_tracking_without_resetting_baseline(
@@ -104,15 +104,15 @@ def test_stale_source_does_not_create_false_removals(tmp_path):
     tracker = DisplayChangeTracker(tmp_path / "plan-review.json")
     now = datetime(2026, 9, 25, 7, 0, tzinfo=TZ)
     event = {
-        "uid": "lesson-1",
-        "summary": "Math",
+        "id": "lesson-1",
+        "subject": "Math",
         "start": "2026-09-26T09:00:00+02:00",
         "end": "2026-09-26T09:45:00+02:00",
     }
     tracker.update(_model(now=now, events=[event]), _fresh())
 
     empty = _model(now=now)
-    stale = {"calendar.lectio": SourceStatus(state="stale", is_stale=True)}
+    stale = {"schedule": SourceStatus(state="stale", is_stale=True)}
     assert tracker.update(empty, stale).total == 0
 
     assert tracker.update(empty, _fresh()).removed == 1
@@ -124,8 +124,8 @@ def test_items_that_age_out_of_the_three_day_window_are_not_reported_removed(
     tracker = DisplayChangeTracker(tmp_path / "plan-review.json")
     before = datetime(2026, 9, 25, 7, 0, tzinfo=TZ)
     yesterday = {
-        "uid": "lesson-1",
-        "summary": "Yesterday's math",
+        "id": "lesson-1",
+        "subject": "Yesterday's math",
         "start": "2026-09-25T09:00:00+02:00",
         "end": "2026-09-25T09:45:00+02:00",
     }
@@ -143,8 +143,8 @@ def test_event_removed_while_still_in_today_is_reported_but_midnight_expiry_is_n
     tracker = DisplayChangeTracker(tmp_path / "plan-review.json")
     before = datetime(2026, 9, 25, 7, 0, tzinfo=TZ)
     still_relevant = {
-        "uid": "lesson-today",
-        "summary": "Math",
+        "id": "lesson-today",
+        "subject": "Math",
         "start": "2026-09-25T09:00:00+02:00",
         "end": "2026-09-25T09:45:00+02:00",
     }
@@ -154,8 +154,8 @@ def test_event_removed_while_still_in_today_is_reported_but_midnight_expiry_is_n
 
     midnight_tracker = DisplayChangeTracker(tmp_path / "midnight-review.json")
     ending_at_midnight = {
-        "uid": "lesson-midnight",
-        "summary": "Late study",
+        "id": "lesson-midnight",
+        "subject": "Late study",
         "start": "2026-09-25T23:00:00+02:00",
         "end": "2026-09-26T00:00:00+02:00",
     }
@@ -168,22 +168,20 @@ def test_event_removed_while_still_in_today_is_reported_but_midnight_expiry_is_n
 def test_homework_aging_out_after_its_due_time_is_not_reported_removed(tmp_path):
     tracker = DisplayChangeTracker(tmp_path / "plan-review.json")
     before = datetime(2026, 9, 25, 7, 0, tzinfo=TZ)
-    config = HomeAssistantEntityConfig(private_calendar_entity_ids=())
     initial = build_display_model(
         now=before,
         homework=[
             {
-                "uid": "homework-1",
-                "summary": "Math",
+                "id": "homework-1",
+                "subject": "Math",
                 "description": "Practice",
-                "due": "2026-09-25T09:00:00+02:00",
+                "target_lesson_start": "2026-09-25T09:00:00+02:00",
             }
         ],
     )
     tracker.update(
         initial,
-        {config.homework_entity_id: SourceStatus(state="valid")},
-        config,
+        {"homework": SourceStatus(state="valid")},
     )
     after_due = datetime(2026, 9, 25, 10, 0, tzinfo=TZ)
     empty = build_display_model(now=after_due)
@@ -191,8 +189,24 @@ def test_homework_aging_out_after_its_due_time_is_not_reported_removed(tmp_path)
     assert (
         tracker.update(
             empty,
-            {config.homework_entity_id: SourceStatus(state="valid")},
-            config,
-        ).total
+            {"homework": SourceStatus(state="valid")},
+            ).total
         == 0
     )
+
+
+def test_upgrade_prunes_retired_ha_source_keys_without_spurious_changes(tmp_path):
+    path = tmp_path / "plan-review.json"
+    item = {"fingerprint": "a" * 64, "expires_on": None, "expires_inclusive": False}
+    path.write_text(json.dumps({
+        "version": 1,
+        "acknowledged": {"calendar.lectio": {}, "calendar.private": {}},
+        "current": {"calendar.lectio": {"old": item}, "calendar.private": {"private": item}},
+        "acknowledged_at": None,
+    }), encoding="utf-8")
+    tracker = DisplayChangeTracker(path)
+    assert tracker.summary.total == 0
+    tracker.update(_model(now=datetime(2026, 9, 25, 7, tzinfo=TZ)), _fresh())
+    persisted = json.loads(path.read_text(encoding="utf-8"))
+    assert set(persisted["current"]) == {"schedule"}
+    assert set(persisted["acknowledged"]) == {"schedule"}
