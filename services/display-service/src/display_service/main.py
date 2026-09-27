@@ -6,20 +6,23 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time
 from contextlib import asynccontextmanager, suppress
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Body, FastAPI, HTTPException, Request
 from starlette.responses import Response
 
+from .change_tracker import DisplayChangeSummary, DisplayChangeTracker
 from .device_registry import DeviceRecord, DeviceRegistry
 from .entity_config import HomeAssistantEntityConfig
 from .ha_client import HomeAssistantClient
 from .image_store import DisplayImageStore
+from .model import DisplayModel
 from .model_service import DisplayModelService
-from .renderer import render_display_model
+from .renderer import mark_display_stale, render_display_model
 from .setup_config import (
     HomeAssistantDisplaySettings,
     HomeAssistantDisplaySettingsStore,
@@ -28,6 +31,7 @@ from .setup_config import (
 _LOGGER = logging.getLogger(__name__)
 _DEFAULT_REFRESH_SECONDS = 30
 _HOME_ASSISTANT_SETUP_FILENAME = "home-assistant-setup.json"
+_CONTENT_HASH_PATTERN = re.compile(r"^[a-f0-9]{64}$")
 
 
 class DisplayBackend:
@@ -40,11 +44,14 @@ class DisplayBackend:
     ) -> None:
         self.devices = DeviceRegistry(data_dir)
         self.images = DisplayImageStore(data_dir)
+        self.changes = DisplayChangeTracker(data_dir / "plan-review.json")
         self._setup_status_path = data_dir / _HOME_ASSISTANT_SETUP_FILENAME
         self._entity_config = entity_config or HomeAssistantEntityConfig()
         self._models: DisplayModelService | None = None
         self._refresh_lock = asyncio.Lock()
         self._next_refresh_at = 0.0
+        self._last_model: DisplayModel | None = None
+        self._last_data_stale = False
         self.set_home_assistant_setup_state("not_configured")
 
     def set_home_assistant(
@@ -62,6 +69,7 @@ class DisplayBackend:
         self._models = None
         self._next_refresh_at = 0.0
         self.set_home_assistant_setup_state(state)
+        self._mark_current_image_stale()
 
     def set_home_assistant_setup_state(self, state: str) -> None:
         """Persist a safe, allowlisted Home Assistant setup state for diagnostics."""
@@ -106,6 +114,7 @@ class DisplayBackend:
                 )
                 if not usable:
                     _LOGGER.warning("Display refresh skipped: no usable Home Assistant source")
+                    self._mark_current_image_stale()
                     return
                 calendar_sources = {
                     entity_id: source
@@ -119,13 +128,32 @@ class DisplayBackend:
                 }
                 if not usable_calendars:
                     _LOGGER.warning("Display refresh skipped: no usable calendar source")
+                    self._mark_current_image_stale()
                     return
                 if self.images.current is not None and usable_calendars != set(calendar_sources):
                     _LOGGER.warning(
                         "Display refresh skipped: preserving image until all calendar sources are usable"
                     )
+                    self._mark_current_image_stale()
                     return
-                bmp = render_display_model(result.model)
+                data_stale = any(
+                    source.state != "valid" or source.is_stale
+                    for source in result.sources.values()
+                )
+                self._last_data_stale = data_stale
+                summary = self.changes.update(
+                    result.model,
+                    result.sources,
+                    self._entity_config,
+                )
+                self._last_model = result.model
+                bmp = render_display_model(
+                    result.model,
+                    change_count=summary.total,
+                    acknowledged_at=summary.acknowledged_at,
+                    show_status=True,
+                    data_stale=data_stale,
+                )
                 self.images.publish(bmp, result.model.generated_at)
             except asyncio.CancelledError:
                 raise
@@ -134,10 +162,50 @@ class DisplayBackend:
                 self.set_home_assistant_setup_state(
                     "unreachable" if code == "connection_failed" else "partial_error"
                 )
+                try:
+                    self._mark_current_image_stale()
+                except Exception:
+                    _LOGGER.warning("Could not mark the retained display image as stale")
                 _LOGGER.warning(
                     "Display refresh failed (%s)",
                     code if isinstance(code, str) else "refresh_failed",
                 )
+
+    async def acknowledge_changes(
+        self, expected_content_hash: str
+    ) -> DisplayChangeSummary | None:
+        """Acknowledge the latest fresh sources and publish the cleared marker."""
+        async with self._refresh_lock:
+            current = self.images.refresh_current()
+            if (
+                self._last_model is None
+                or current is None
+                or current.content_hash != expected_content_hash
+            ):
+                return None
+            summary = self.changes.acknowledge()
+            if summary is None:
+                return None
+            bmp = render_display_model(
+                self._last_model,
+                change_count=summary.total,
+                acknowledged_at=summary.acknowledged_at,
+                show_status=True,
+                data_stale=self._last_data_stale,
+            )
+            self.images.publish(bmp, self._last_model.generated_at)
+            return summary
+
+    def _mark_current_image_stale(self) -> None:
+        current = self.images.current
+        if current is None:
+            return
+        bmp = self.images.read(current.content_hash)
+        if bmp is None:
+            return
+        stale_bmp = mark_display_stale(bmp)
+        self.images.publish(stale_bmp, datetime.now(timezone.utc))
+        self._last_data_stale = True
 
 
 @asynccontextmanager
@@ -284,6 +352,35 @@ async def display_metadata(request: Request) -> dict[str, object]:
         "image_url": f"/device/v1/image/{current.content_hash}.bmp",
         "generated_at": current.generated_at,
         "next_check_seconds": _DEFAULT_REFRESH_SECONDS,
+        "changes_since_acknowledgement": backend.changes.summary.total,
+        "change_tracking_available": backend.changes.available,
+    }
+
+
+@app.post("/device/v1/acknowledge")
+async def acknowledge_display(
+    request: Request,
+    payload: dict[str, object] = Body(...),
+) -> dict[str, object]:
+    await _authenticated_device(request)
+    content_hash = payload.get("content_hash")
+    if not isinstance(content_hash, str) or not _CONTENT_HASH_PATTERN.fullmatch(
+        content_hash
+    ):
+        raise HTTPException(status_code=422, detail="A valid content hash is required")
+    summary = await _backend(request).acknowledge_changes(content_hash)
+    if summary is None:
+        raise HTTPException(
+            status_code=409,
+            detail="No fresh display data is available to acknowledge",
+        )
+    return {
+        "status": "ok",
+        "added": summary.added,
+        "changed": summary.changed,
+        "removed": summary.removed,
+        "changes_since_acknowledgement": summary.total,
+        "acknowledged_at": summary.acknowledged_at,
     }
 
 

@@ -1,11 +1,12 @@
 import asyncio
+import hashlib
 import json
 from datetime import date, datetime, timezone
 
 from display_service.main import DisplayBackend
 from display_service.model import DisplayDay, DisplayEvent, DisplayModel
 from display_service.model_service import DisplayModelResult, SourceStatus
-from display_service.renderer import render_display_model
+from display_service.renderer import mark_display_stale, render_display_model
 
 
 def test_restart_with_unavailable_calendar_sources_retains_image_until_recovery(tmp_path):
@@ -44,16 +45,19 @@ def test_restart_with_unavailable_calendar_sources_retains_image_until_recovery(
 
     async def run():
         await restarted.refresh_if_due()
-        assert restarted.images.current == previous
-
-        restarted._next_refresh_at = 0
-        await restarted.refresh_if_due()
-        assert restarted.images.current == previous
+        assert restarted.images.current is not None
+        assert restarted.images.current.content_hash != previous.content_hash
+        stale_revision = restarted.images.current
 
         restarted._next_refresh_at = 0
         await restarted.refresh_if_due()
         assert restarted.images.current is not None
-        assert restarted.images.current.content_hash != previous.content_hash
+        assert restarted.images.current.content_hash == stale_revision.content_hash
+
+        restarted._next_refresh_at = 0
+        await restarted.refresh_if_due()
+        assert restarted.images.current is not None
+        assert restarted.images.current.content_hash != stale_revision.content_hash
 
     asyncio.run(run())
 
@@ -108,7 +112,7 @@ def test_display_backend_reports_rejected_home_assistant_token(tmp_path):
     assert _setup_status(tmp_path)["state"] == "unauthorized"
 
 
-def test_runtime_reloads_managed_configuration_and_keeps_last_image_on_corruption(
+def test_runtime_reloads_managed_configuration_and_marks_last_image_stale_on_corruption(
     monkeypatch, tmp_path
 ):
     from display_service import main
@@ -146,7 +150,7 @@ def test_runtime_reloads_managed_configuration_and_keeps_last_image_on_corruptio
     )
     backend = DisplayBackend(tmp_path / "display")
     previous_model = _model("Last known-good lesson")
-    previous = backend.images.publish(
+    backend.images.publish(
         render_display_model(previous_model), previous_model.generated_at
     )
     runtime = HomeAssistantRuntime(backend, config_dir, {})
@@ -178,7 +182,9 @@ def test_runtime_reloads_managed_configuration_and_keeps_last_image_on_corruptio
         assert clients[-1].closed
         assert backend._models is None
         assert _setup_status(tmp_path / "display")["state"] == "invalid_configuration"
-        assert backend.images.current == previous
+        assert backend.images.current is not None
+        stale_bmp = mark_display_stale(render_display_model(previous_model))
+        assert backend.images.current.content_hash == hashlib.sha256(stale_bmp).hexdigest()
 
         await runtime.close()
 

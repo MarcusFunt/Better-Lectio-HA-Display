@@ -2997,3 +2997,174 @@ Task 2 test coverage also includes `test_client_factory_failure_keeps_week_lkg`,
 1. If Home Assistant is on another host, set the API host bind to a reserved LAN address and restrict port `8002` to that HA host before exposing it beyond loopback.
 2. Open the login-page wizard to configure the display URL/token/entities and generate the scoped API token; install Better Lectio through HACS and add the integration in Home Assistant.
 3. Verify live HA entities, display diagnostics, and managed-config persistence in the target environment; those checks are not established by local health endpoints or fixture tests.
+
+## 2026-09-26 — Audit and fastest route to a morning-ready appliance
+
+### Audit outcome and evidence
+
+- I read all 27 Markdown files recursively before inspecting the repository and GitHub state, including the generated PlatformIO dependency documentation and the complete existing implementation log. No project test suite was run during this review.
+- At review start, local main, origin/main, and GitHub main all pointed to d949541ffec44a8bfeafc1c51a42a2b709fd7d85. The main worktree was clean. The code-bearing setup-wizard commit is ebeaaef; d949541 adds the deployment record.
+- The live Compose stack has five healthy services: gateway, display service, scoped HA API, display diagnostics, and auth lifecycle. The gateway reports AUTHENTICATED with a student ID available. Its persisted source status says valid, but its last successful fetches are from 2026-09-25 17:10–17:12 UTC; I did not request schedule contents, so treat these as historical until Home Assistant triggers a new fetch.
+- The setup page’s safe status reports no managed display-to-HA settings, no managed gateway API token, loopback binding on port 8002, and no rendered bitmap. The current display diagnostics report not_rendered and not_configured. The running display and gateway health endpoints return success. Health is process health, not end-to-end data or panel validation.
+- The Compose defaults publish the device API on 127.0.0.1:8001 and the HA API on 127.0.0.1:8002. A different LAN host cannot reach either until the Compose host binding and its firewall are configured.
+- The required code layers are present: authenticated Lectio gateway and normalized cached sources; root HACS integration; typed HA-backed display model; deterministic 800×480 monochrome renderer and snapshots; content-addressed image store and device API; persistent device credential registry; and a compiling XIAO ESP32-S3 firmware target.
+- The key missing step for a physical unit is provisioning. tools/provision contains only a placeholder, the root Makefile has no firmware/flash/provision targets, and the Lectio firmware reads its Wi-Fi, server, device ID, and device secret from NVS. Its unprovisioned screen asks for USB setup, but the Lectio loop has no serial configuration reader. The registry already has create/list/rotate/revoke operations in services/display-service/src/display_service/devices.py.
+- The current firmware checks the image content hash and leaves the last applied image alone when downloads fail. It has compiled in PlatformIO and CI, but it has not been flashed or verified on the physical panel. The recorded hardware work still leaves the panel/controller revision to confirm.
+- The current renderer reflects the latest HA model and the firmware reacts to an image hash change. There is no retained before/after event ledger, “since last check” label, or acknowledgement path. A changing hash only means the image changed; it does not mean the user has reviewed the change.
+- The display’s standard Home Assistant refresh is 300 seconds and its image refresh is 30 seconds. The gateway cache is also five minutes. The practical update cadence is therefore measured in minutes; reducing only the display poll interval will not make Lectio data fresher.
+- GitHub lists eight branches. main is current. codex/home-assistant-setup-wizard, docs/agent-workflow-plan-tracking, feat/lectio-adapter, and feat/trmnl-byos-server are ancestors of main. The two open branches docs/repository-review-2026-09-25 and docs/home-assistant-connection-handoff contain plan-log additions only. feat/milestone-0-scaffold has one branch-only documentation commit, not a unique runtime implementation.
+- The local feat/custom-firmware worktree is at 3fd115d, 24 commits behind main and zero ahead. Its 325 firmware files match the current main firmware tree; the only additional file is an ignored test.bmp. Its uncommitted 33-line implementation-plan note is an older firmware-start log, not missing source code. I left that worktree untouched.
+- PRs #1–#5 are merged. Open PR #6, “docs: record current repository readiness review,” changes only IMPLEMENTATION_PLAN.md and has no reported checks. Open PR #7, “docs: record Home Assistant connection handoff,” also changes only IMPLEMENTATION_PLAN.md; its reported CI jobs pass. Neither contains unique application code that blocks the appliance. Links: [PR #6](https://github.com/MarcusFunt/Better-Lectio-HA-Display/pull/6), [PR #7](https://github.com/MarcusFunt/Better-Lectio-HA-Display/pull/7).
+- The latest GitHub run, [36243298751](https://github.com/MarcusFunt/Better-Lectio-HA-Display/actions/runs/36243298751), has passing service tests/lint, Compose validation, image builds, and firmware compile. Its Home Assistant job fails before the HA test steps because HACS repository validation cannot find a root license, GitHub repository description, valid topics, or a Home Assistant brand asset. The same issue appears on the setup-wizard run. This is a repository publishing-metadata failure, not a failing gateway/display/firmware test.
+- The prior setup-wizard evidence in this log records 209 service tests, 35 HA tests, three local HACS metadata tests, lint, Compose parsing, and image builds passing. Those were recorded results, not rerun for this audit. The HA integration has not been installed against a live Home Assistant instance, and HACS remote installation, a live LAN route, and physical e-paper rendering remain unverified.
+- README.md and ARCHITECTURE_AND_OPERATIONS.md still contain the earlier “first vertical slice” as the next focus even though authentication and data endpoints now exist. I did not edit them because the repository’s Markdown policy permits routine planning and progress changes only in this file.
+
+### Morning-ready outcome and assumptions
+
+The fastest meaningful finish is one local appliance, not every optional productization milestone. For acceptance, one physical display must show the current three-day merged Lectio/private-calendar view, assignments/homework/cancellations, a visible freshness time, and a clear indication of changes since the user last acknowledged the screen. It must retain the last valid image through a temporary source or network failure.
+
+This plan assumes the selected separate-LAN-host Home Assistant setup, one XIAO ESP32-S3 800×480 e-paper unit, and access to the Compose host and its firewall. If the board or HA host is not available, the matching hardware/live-system gate remains pending. The request adds a user-reviewed change summary beyond the current architecture’s latest-state display; keep the existing service boundaries and track this as a display-service feature rather than silently changing the architecture document.
+
+### Fastest critical path
+
+#### Task 1 — Configure the existing live data path and produce the first bitmap
+
+**Files/surfaces:** Compose-host .env and firewall; the running /auth/browser setup page; HACS or the supported manual Home Assistant installation path.
+
+- [ ] Reserve a private Compose-host address reachable by the HA host and the display. Set LECTIO_HA_API_BIND_ADDRESS for the HA-reachable interface and DISPLAY_BIND_ADDRESS for the display-reachable interface; keep ports 8002 and 8001 restricted in the host firewall to their intended clients. Keep the admin/login port 8000 loopback-bound. Do not expose either service publicly.
+- [ ] Recreate only lectio-ha-api and display-service after the bind change; retain all named volumes. Confirm their health endpoints and verify HA reaches the Compose host's private address on port 8002.
+- [ ] Open /auth/browser. Set the HA-reachable gateway API URL and generate the scoped API token once. Copy it directly into the Better Lectio config flow in HA; the gateway keeps only the digest, and the wizard will not reveal the raw token again. If it must be rotated later, use the integration’s Reconfigure action on the same HA entry.
+- [ ] Install Better Lectio from HACS as a custom Integration repository and add its config entry with that URL/token. If HACS rejects the repository before installation because its publisher metadata is missing, use the already documented manual copy into HA’s custom_components directory to unblock the live appliance; record that as manual installation, not HACS validation.
+- [ ] In the wizard, save the display service’s HA base URL, write-only HA long-lived token, and semantic entity roles. Select the actual Lectio calendar, private calendar(s), assignment to-do, homework to-do, and cancellation sensor. Keep private calendar management in HA.
+- [ ] Wait up to one 30-second display refresh for managed settings to reload. Confirm the wizard reports a safe connected/partial status as appropriate, the bitmap preview has a new content hash and timestamp, and the model uses the configured entities. Confirm Lectio has synchronized since the old 2026-09-25 timestamps; do not infer fresh data from the previous “valid” flag alone.
+- [ ] Use the configured HA refresh behavior for normal operation. For live diagnosis, shorten the integration polling interval if desired, but remember the five-minute gateway cache can remain the effective freshness floor. Do not claim that the bitmap proves the physical panel works.
+
+**Exit gate:** A current, non-empty or valid-empty HA model produces a validated 800×480 BMP, and the preview reports its revision/time without exposing either token. The running instance currently fails this gate because HA is not configured and no image exists.
+
+#### Task 2 — Add “since last check” change tracking and acknowledgement
+
+**Files:** create services/display-service/src/display_service/change_tracker.py; modify services/display-service/src/display_service/model_service.py, model.py, renderer.py, main.py, and focused display-service tests; modify firmware/src/lectio/main.cpp and firmware/src/lectio/device_api.cpp to send the review action.
+
+- [ ] Before implementation, verify that the actual board has a usable front-accessible button. GPIO0 is a candidate in the current XIAO configuration, but the Lectio loop does not read it. Use a short press to mean “I have reviewed this screen”; if no suitable button exists, expose a same-origin “Mark reviewed” action on /auth/browser and record that this requires a web action.
+- [ ] Add a persistent reviewed baseline in display-service-data using stable HA event/todo identifiers where available and canonical fingerprints otherwise. Compare only the successful/current source results against the last acknowledged baseline; preserve per-source last-known-good state on source errors.
+- [ ] Detect added, moved/time-changed, renamed, room/teacher-changed, cancelled, and still-relevant removed items. Do not report items merely because they aged out of the rolling three-day window. Never turn a failed or never-successful source into mass removals.
+- [ ] Render a compact “changes since [review time]” indication and item-level change labels while preserving the locked cancellations > assignments > homework ordering. Include a clear no-changes state and the latest usable source time.
+- [ ] Add an authenticated POST /device/v1/reviewed (or a same-origin wizard action for the no-button fallback) that acknowledges the exact current content/model revision. Acknowledgement must not advance if its revision is older than the current display.
+- [ ] Write regression tests first: test_detects_added_changed_and_cancelled_items_since_ack, test_rolling_window_expiry_is_not_a_removal, test_stale_source_does_not_produce_removals, test_reviewed_baseline_survives_restart, and test_review_ack_rejects_an_old_revision. Add renderer snapshots for changed and no-change states.
+- [ ] Run focused display-service tests, the service suite, lint, Compose validation, and the CI-matched snapshot environment before proceeding to flash the final firmware.
+
+**Exit gate:** After a review acknowledgement, the baseline persists across service restart. A later successful source change remains visibly marked until acknowledged. HA errors retain the previous image and do not masquerade as deletions.
+
+#### Task 3 — Finish one-device USB provisioning
+
+**Files:** implement tools/provision/pyproject.toml and tools/provision/provision.py with an explicit pyserial dependency; add the bounded USB provisioning protocol to firmware/src/lectio/main.cpp and a small firmware/src/lectio/usb_provisioning module; add tests and root Makefile targets.
+
+- [ ] Define one versioned, bounded serial request/response format for Wi-Fi SSID/password, local display-service URL, device ID, and per-device secret. Accept configuration only over the connected USB serial session, validate field sizes/URL, write the existing NVS keys in namespace lectio, acknowledge success without echoing secrets, then reboot.
+- [ ] Build a host provision command that selects a COM/serial port, optionally flashes the same generic lectio_s3 firmware, registers a device through the existing local registry operation, sends its credential/config over USB, waits for reboot, then checks authenticated /device/v1/status and /device/v1/display access. Add firmware, flash, and provision Make targets without embedding device credentials in the binary.
+- [ ] Keep the generated secret in process memory during provisioning and prevent it from appearing in serial logs, shell history, command-line arguments, tests, or saved files. If provisioning fails after registration, revoke or rotate that record so it is not left as an unknown active credential.
+- [ ] Add test_serial_provisioning_accepts_valid_config, test_serial_provisioning_rejects_invalid_or_oversized_config, test_provisioning_never_logs_credentials, and test_registry_record_is_revoked_when_usb_write_fails. Run the host tests and repeat the PlatformIO lectio_s3 compile.
+- [ ] Flash the generic firmware, provision the physical board, and confirm one successful authenticated metadata/image fetch. Keep the device on the trusted local network; the current firmware requires HTTP and the architecture expects LAN-only device traffic.
+
+**Exit gate:** A generic binary works with runtime per-device settings; provisioning never places a secret in firmware or a committed file; the service registers the device and observes an authenticated request after reboot.
+
+#### Task 4 — Verify the actual panel and morning failure behavior
+
+**Files/surfaces:** the user’s board and Home Assistant instance; firmware driver/pin settings only if hardware evidence requires a correction.
+
+- [ ] Confirm the exact panel/controller revision and wiring before repeated refreshes. The firmware CI build establishes compile/link only.
+- [ ] Run the real path once: Lectio sync → HA calendar/todo/sensor entities → display model → BMP → device-authenticated download → e-paper refresh. Record only status, timestamps, content hash, and item counts; do not log private event contents or secrets.
+- [ ] Change one safe test input through HA or use a naturally occurring plan update, confirm the visible change marker, acknowledge it on-device, and confirm it clears. Avoid changing real Lectio data.
+- [ ] Power-cycle the host/device and interrupt network access briefly. Confirm the device and service retain the last valid image, recover on reconnection, and do not clear or falsely acknowledge it.
+- [ ] Confirm screen orientation, inversion, readable labels, overflow, and the three-day cutoff in the actual ambient viewing position. Update the firmware driver only after the panel/controller identity is established.
+
+**Exit gate:** Physical panel displays the current HA-backed bitmap, change review works, and temporary network loss preserves the last valid image. This is the first point at which the appliance can be called morning-ready.
+
+#### Task 5 — Close release and operating gaps without delaying the first local display
+
+- [ ] Resolve the repository’s license before adding a root LICENSE: the repo includes a GPL-3.0 firmware snapshot and depends on the AGPL-3.0 python-lectio lineage. Do not add an arbitrary license merely to silence HACS.
+- [ ] Set the GitHub repository description and valid topics, then supply/register the Better Lectio brand asset required by the current HACS validation action. Rerun the HACS job and confirm it reaches the integration tests; current run 36243298751 fails before those steps on this metadata.
+- [ ] Close or update PR #6 and PR #7 after deciding whether their plan-log content has already been superseded; neither needs a code merge. Do not merge their stale readiness snapshots wholesale.
+- [ ] After local appliance acceptance, finish the architecture’s remote-administration path through Tailscale Serve/ACLs, backup/restore notes, and operational recovery checks. Phase-2 session-flow inspection and Phase-3 login simplification are not required for this first appliance because the current manual Playwright session is already authenticated.
+
+### Definition of done for this request
+
+- One physical device shows the current 800×480 three-day merged schedule sourced through HA, including the configured private calendar and the prioritized Lectio sidebar.
+- The screen shows when it was last refreshed and whether relevant plans changed since the user last acknowledged the display; a short physical button press is the preferred acknowledgement if the board supports one.
+- Freshness/error states remain honest, and a source outage or reboot does not replace good visible data with an empty screen or false deletion list.
+- The device is provisioned over USB with a runtime per-device credential, polls the local service, updates only when the image changes, and has been observed working on the real panel.
+- The audit’s local health/CI evidence remains distinct from live HA/HACS/network/hardware acceptance. At this review, the first image, USB provisioning, change acknowledgement, HACS remote validation, and physical-panel checks are still incomplete.
+
+### How this audit went
+
+- Inspected local Git state and worktrees, GitHub branch heads and all PRs, the latest GitHub Actions run and failed step, Compose bindings, the safe live setup/diagnostics responses, firmware NVS/API code, provisioning tools, and the display backend.
+- This task changed no application source/configuration and ran no tests. The execution record above contains earlier test and CI evidence; the current GitHub failure is linked directly.
+- I changed only this canonical plan to record the audit and proposed sequence. The separate firmware worktree and its uncommitted plan note were preserved.
+
+### Next steps
+
+1. First unblock a live HA connection and rendered preview through the existing setup page; the local gateway session and service stack are already running.
+2. Implement the acknowledged change summary and the USB provisioning path, then flash and validate one physical unit.
+3. Resolve HACS publishing metadata and complete Tailnet/operations work after the local appliance path is proven.
+
+
+### 2026-09-27 — Implement change review and USB appliance path
+
+#### Evidence and findings
+
+- The display backend now persists per-source acknowledged/current fingerprints and hashed item identities in its existing data volume. It compares only fresh sources, ages out entries that naturally leave the display window, retains stale-source baselines, and fails closed if review state is unreadable or corrupt. Stored review state contains hashes and expiry metadata rather than event titles or descriptions.
+- The bitmap now displays the last acknowledgement time and a pending-change count. It marks stale data while retaining the last schedule bitmap. Device acknowledgement is authenticated and tied to the exact displayed content hash, so an old screen cannot acknowledge a newer revision.
+- Firmware now supports a short-press review action through the configured button pin and a bounded, versioned USB provisioning protocol. The host utility prompts for the Wi-Fi password without echoing it, registers a per-device credential, provisions over USB, checks authenticated service contact, and attempts registry revocation on explicit provisioning failures. This is code/build evidence only; no board was connected or flashed.
+- Added the HACS brand icon and logo locally and updated the GitHub repository description/topics. The root license remains unresolved because the repository mixes a GPL-3.0 firmware snapshot with an AGPL-3.0 dependency. I did not add an arbitrary root license. Brand files and application code remain local and were not pushed, so the remote HACS action was not rerun.
+- This implementation reports whether and how many plans changed; it does not yet label individual changed schedule/sidebar rows. The panel button pin is still a candidate until checked on the actual board. The existing Home Assistant setup values/token are not configured, and no current HA-backed bitmap or physical display output was verified.
+
+#### Tasks completed
+
+- Added persistent change tracking, stale-source handling, expiry rules, last-known-good stale marking, and exact-content-hash acknowledgement to the display service, renderer, and firmware API.
+- Added USB provisioning host/protocol code, firmware serial intake, Make targets, and protocol validation tests.
+- Added brand images and applied the repository description/topics through GitHub.
+- Rebuilt only display-service using docker compose up --detach --build display-service, preserving its existing named data volume. The service reports healthy and GET http://127.0.0.1:8001/health returned {"status":"ok","service":"display-service"}. Other Compose services were not recreated.
+
+#### How it went
+
+- The full service test suite passed after adding host-workflow coverage: **237 passed**. The new checks confirm provisioning credentials are absent from terminal output and that a USB write failure triggers registry revocation. Repository Ruff lint passed, including provisioning code. Home Assistant manifest tests passed: **3 passed**. docker compose config --quiet passed. PlatformIO lectio_s3 firmware build succeeded, producing a merged image; this does not mean it was flashed. git diff --check passed; Git emitted only its normal LF-to-CRLF working-copy notices.
+- The focused acknowledgement test exposed that an invalid request body is rejected before authentication; the unauthorized regression now supplies a valid revision body and confirms the expected 401. The focused device API tests then passed: **3 passed**.
+- The local health endpoint is a process check, not evidence that Home Assistant is connected or that a bitmap exists. HACS remote validation, token/LAN configuration, USB serial provisioning, panel rendering, and the button path remain untested. The implementation is uncommitted and unpushed; no PR was modified.
+
+#### Next steps
+
+1. Use the existing setup flow to configure the HA-reachable gateway URL, scoped API token, display URL, HA token, and actual calendar/todo/sensor roles; confirm a fresh bitmap in the preview.
+2. Connect the real XIAO/panel, verify the button pin, flash the built firmware, provision it over USB, and confirm authenticated fetch, visible schedule, change count, acknowledgement, and recovery after a brief network loss.
+3. If the screen needs users to identify which rows changed without opening Home Assistant, add compact per-item change labels and renderer tests; the current count-only indicator does not meet that more detailed plan item.
+4. Decide the repository-wide license, then commit/push the local implementation and rerun GitHub HACS validation. Description/topics are set; brand assets must reach the remote branch first.
+
+### 2026-09-27 — HITL readiness review
+
+#### Evidence and findings
+
+- Read all 27 repository Markdown files recursively before reviewing the code and runtime, including the complete implementation log, both approved specs, pytest-cache notes, and vendored firmware-library Markdown.
+- The current `main` worktree contains uncommitted change-review and USB-provisioning work across `IMPLEMENTATION_PLAN.md`, `Makefile`, firmware, display-service code/tests, and new provisioning/brand files. Preserve these changes; do not reset or pull over them.
+- `docker compose ps` reports the five default services healthy. Read-only local health requests to gateway, display service, and HA API returned `ok`.
+- Safe setup diagnostics report no managed HA display configuration, no scoped API token, loopback API binding (`127.0.0.1:8002`), and no rendered image. `/auth/diagnostics` reports the gateway authenticated with student ID available, but source sync timestamps remain 2026-09-25; this review did not trigger a new Lectio fetch.
+- No `.env` file exists. The current Compose defaults also bind the device service to loopback (`127.0.0.1:8001`), so a separate HA host and LAN display cannot reach their APIs until the host LAN binds/firewall are configured.
+- Windows serial enumeration found only Bluetooth COM4/COM5; no USB XIAO serial device is currently detected. PlatformIO Core 6.1.15 and pyserial 3.5 are installed.
+- `python tools/provision/provision_device.py --help` fails because the script uses a package-relative import. The supported workaround, `python -m tools.provision.provision_device --help`, succeeds. `Makefile`'s `provision-device` target still uses the failing direct-script invocation.
+- The firmware target is the XIAO ESP32-S3 e-paper monitor-kit configuration. The current code maps the review action to GPIO5/KEY3, but the plan correctly leaves that physical button mapping to be confirmed on the actual board.
+- Current local brand assets/code are uncommitted and the latest recorded remote HACS validation had publishing-metadata failures. Manual installation from this checkout's root `custom_components/better_lectio` is the reliable path for this HITL pass; no live HA or HACS operation was performed here.
+
+#### Tasks completed
+
+- Compared the intended appliance HITL sequence with the current Git state, Compose bindings, safe setup/diagnostic responses, provisioning entrypoint, host serial ports, and firmware target/button mapping.
+- Identified the exact immediate prerequisites and module-invocation workaround for the user-facing runbook.
+
+#### How it went
+
+- Review only: no application code was changed, no test suite or firmware build/flash was run, and no live Home Assistant, Lectio, USB provisioning, or display hardware path was exercised.
+- The app services are healthy but the display is not end-to-end configured: the first required gates are host LAN reachability, HA integration/setup, and a fresh bitmap. Hardware provisioning follows only after that bitmap is available.
+
+#### Next steps
+
+1. Create `.env` from `.env.example`, bind ports 8001 and 8002 to the Compose host's private LAN address, and restrict firewall access to the display and HA host; keep port 8000 loopback-bound.
+2. Install the current custom integration in HA, create/configure the scoped API and display-to-HA credentials through `/auth/browser`, select real entity IDs, and wait for fresh source timestamps plus a rendered bitmap.
+3. Connect the supported XIAO board, confirm its COM port and KEY3 button, then flash/provision using `python -m tools.provision.provision_device --port COMx --server-url http://<server-lan-ip>:8001 --ssid "<wifi-name>" --name "Better Lectio display" --flash`.
+4. Exercise an add/change/remove private-calendar test event and the short-press acknowledgement, then optionally stop/start only `display-service` to confirm the panel retains its last image during service loss.
+5. Fix the `provision-device` Makefile entrypoint in a separate small follow-up before relying on that target; preserve this HITL run's current uncommitted changes.

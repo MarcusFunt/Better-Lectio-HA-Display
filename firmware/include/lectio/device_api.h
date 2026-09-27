@@ -30,6 +30,9 @@ bool fetchDisplayMetadata(const DeviceConfig &config, DisplayMetadata &metadata,
 bool downloadDisplayImage(const DeviceConfig &config, const DisplayMetadata &metadata, uint8_t **image,
                           size_t &imageSize, int &httpStatus, String &error);
 
+bool acknowledgeDisplayChanges(const DeviceConfig &config, const String &contentHash, int &httpStatus,
+                               String &error);
+
 bool isValidDisplayBitmap(const uint8_t *image, size_t imageSize);
 
 }  // namespace lectio

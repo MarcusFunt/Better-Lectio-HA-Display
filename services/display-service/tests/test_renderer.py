@@ -1,10 +1,11 @@
 from dataclasses import replace
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from hashlib import sha256
 from io import BytesIO
 
 import display_service.renderer as renderer
 from display_service.model import DisplayDay, DisplayEvent, DisplayModel, SidebarItem
+from display_service.renderer import mark_display_stale
 from PIL import Image, ImageChops
 
 
@@ -61,6 +62,60 @@ def test_render_display_is_deterministic_and_hashes_visible_changes():
     assert repeated.content_hash == first.content_hash
     assert changed.bmp != first.bmp
     assert changed.content_hash != first.content_hash
+
+
+def test_render_display_includes_review_count_and_acknowledgement_time_when_enabled():
+    model = _model("History")
+
+    render = _render_display()
+    plain = render(model)
+    checked = render(
+        model,
+        change_count=2,
+        acknowledged_at="2026-09-25T05:00:00+00:00",
+        show_status=True,
+    )
+
+    assert checked.bmp != plain.bmp
+    assert checked.content_hash != plain.content_hash
+
+
+def test_review_header_does_not_force_periodic_e_paper_refreshes():
+    render = _render_display()
+    model = _model("History")
+    status = {
+        "change_count": 1,
+        "acknowledged_at": "2026-09-25T05:00:00+00:00",
+        "show_status": True,
+    }
+
+    first = render(model, **status)
+    later_refresh = render(
+        replace(model, generated_at=model.generated_at + timedelta(minutes=1)),
+        **status,
+    )
+
+    assert later_refresh.content_hash == first.content_hash
+
+
+def test_stale_marker_preserves_last_schedule_pixels():
+    original = _render_display()(_model()).bmp
+    stale = mark_display_stale(original)
+    with Image.open(BytesIO(original)) as original_image, Image.open(
+        BytesIO(stale)
+    ) as stale_image:
+        unchanged_schedule = ImageChops.difference(
+            original_image.crop((0, 0, 646, 480)),
+            stale_image.crop((0, 0, 646, 480)),
+        )
+        unchanged_sidebar_items = ImageChops.difference(
+            original_image.crop((660, 84, 780, 460)),
+            stale_image.crop((660, 84, 780, 460)),
+        )
+
+    assert stale != original
+    assert unchanged_schedule.getbbox() is None
+    assert unchanged_sidebar_items.getbbox() is None
 
 
 def test_schedule_sidebar_layout_keeps_the_approved_gutter_clear():

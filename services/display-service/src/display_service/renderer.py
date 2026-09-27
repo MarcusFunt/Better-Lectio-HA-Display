@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from hashlib import sha256
 from io import BytesIO
+from zoneinfo import ZoneInfo
 
 from PIL import Image, ImageDraw, ImageFont
 
@@ -22,6 +23,7 @@ _MAIN_RIGHT = 646
 _SIDEBAR_LEFT = 660
 _BOTTOM = 459
 _FONT_PATH = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+_DISPLAY_TIMEZONE = ZoneInfo("Europe/Copenhagen")
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,7 +35,14 @@ class RenderedDisplay:
     filename: str
 
 
-def render_display(model: DisplayModel) -> RenderedDisplay:
+def render_display(
+    model: DisplayModel,
+    *,
+    change_count: int = 0,
+    acknowledged_at: str | None = None,
+    show_status: bool = False,
+    data_stale: bool = False,
+) -> RenderedDisplay:
     """Render a display model to a deterministic, content-addressed BMP."""
     image = Image.new("1", (WIDTH, HEIGHT), _PAPER)
     draw = ImageDraw.Draw(image)
@@ -43,12 +52,28 @@ def render_display(model: DisplayModel) -> RenderedDisplay:
     small_font = _font(12)
 
     today = model.days[0].date if model.days else model.generated_at.date()
-    _text(draw, (_LEFT, 15), f"SCHOOL DISPLAY  |  {today:%A %d %B %Y}", title_font)
+    header_font = _font(20) if show_status else title_font
+    header = f"SCHOOL DISPLAY  |  {today:%A %d %B %Y}"
+    if show_status:
+        header = _fit(draw, header, header_font, 495)
+    _text(draw, (_LEFT, 15), header, header_font)
+    if show_status:
+        acknowledged = _format_acknowledged_at(acknowledged_at)
+        change_label = f"{change_count} CHANGE{'S' if change_count != 1 else ''}"
+        status = f"CHECK {acknowledged}  {change_label}"
+        _text(draw, (525, 24), _fit(draw, status, small_font, WIDTH - 545), small_font)
     draw.line((_LEFT, 48, WIDTH - _LEFT, 48), fill=_INK, width=2)
     draw.line((_MAIN_RIGHT, 59, _MAIN_RIGHT, _BOTTOM), fill=_INK, width=1)
 
     _draw_schedule(draw, model, day_font, body_font, small_font)
-    _draw_sidebar(draw, model.sidebar, day_font, body_font, small_font)
+    _draw_sidebar(
+        draw,
+        model.sidebar,
+        day_font,
+        body_font,
+        small_font,
+        data_stale=data_stale,
+    )
 
     output = BytesIO()
     image.save(output, format="BMP")
@@ -62,9 +87,48 @@ def render_display(model: DisplayModel) -> RenderedDisplay:
     )
 
 
-def render_display_model(model: DisplayModel) -> bytes:
+def render_display_model(
+    model: DisplayModel,
+    *,
+    change_count: int = 0,
+    acknowledged_at: str | None = None,
+    show_status: bool = False,
+    data_stale: bool = False,
+) -> bytes:
     """Compatibility wrapper for the existing device API integration."""
-    return render_display(model).bmp
+    return render_display(
+        model,
+        change_count=change_count,
+        acknowledged_at=acknowledged_at,
+        show_status=show_status,
+        data_stale=data_stale,
+    ).bmp
+
+
+def _format_acknowledged_at(value: str | None) -> str:
+    if value is None:
+        return "--:--"
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return "--:--"
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        return "--:--"
+    return parsed.astimezone(_DISPLAY_TIMEZONE).strftime("%H:%M")
+
+
+def mark_display_stale(bmp: bytes) -> bytes:
+    """Overlay a safe stale marker while preserving the last schedule pixels."""
+    with Image.open(BytesIO(bmp)) as existing:
+        image = existing.convert("1")
+    draw = ImageDraw.Draw(image)
+    x = _SIDEBAR_LEFT
+    draw.rectangle((x, 58, WIDTH - _LEFT, 83), fill=_PAPER)
+    _text(draw, (x, 61), "DATA STALE", _font(17))
+    output = BytesIO()
+    image.save(output, format="BMP")
+    image.close()
+    return output.getvalue()
 
 
 def _draw_schedule(draw, model, day_font, body_font, small_font) -> None:
@@ -119,10 +183,18 @@ def _draw_schedule(draw, model, day_font, body_font, small_font) -> None:
             )
 
 
-def _draw_sidebar(draw, items: tuple[SidebarItem, ...], day_font, body_font, small_font) -> None:
+def _draw_sidebar(
+    draw,
+    items: tuple[SidebarItem, ...],
+    day_font,
+    body_font,
+    small_font,
+    *,
+    data_stale: bool = False,
+) -> None:
     x = _SIDEBAR_LEFT
     width = WIDTH - x - _LEFT
-    _text(draw, (x, 61), "UP NEXT", day_font)
+    _text(draw, (x, 61), "DATA STALE" if data_stale else "UP NEXT", day_font)
     y = 84
     groups = (
         ("CANCELLATIONS", "cancellation"),

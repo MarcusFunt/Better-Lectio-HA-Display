@@ -15,6 +15,7 @@ constexpr uint32_t kMinPollSeconds = 5;
 constexpr uint32_t kMaxPollSeconds = 600;
 constexpr size_t kMetadataLimit = 2048;
 constexpr char kDisplayPath[] = "/device/v1/display";
+constexpr char kAcknowledgePath[] = "/device/v1/acknowledge";
 constexpr char kImagePathPrefix[] = "/device/v1/image/";
 
 String normalizedBaseUrl(const String &baseUrl) {
@@ -168,6 +169,32 @@ bool downloadDisplayImage(const DeviceConfig &config, const DisplayMetadata &met
 
   *image = buffer;
   imageSize = received;
+  return true;
+}
+
+bool acknowledgeDisplayChanges(const DeviceConfig &config, const String &contentHash, int &httpStatus, String &error) {
+  if (contentHash.length() != 64) {
+    error = "current content hash is invalid";
+    return false;
+  }
+  WiFiClient client;
+  HTTPClient http;
+  if (!beginAuthenticatedRequest(http, client, config, kAcknowledgePath, error)) {
+    http.end();
+    return false;
+  }
+  http.addHeader("Accept", "application/json");
+  http.addHeader("Content-Type", "application/json");
+  JsonDocument document;
+  document["content_hash"] = contentHash;
+  String body;
+  serializeJson(document, body);
+  httpStatus = http.POST(body);
+  http.end();
+  if (httpStatus != HTTP_CODE_OK) {
+    error = "change acknowledgement returned HTTP " + String(httpStatus);
+    return false;
+  }
   return true;
 }
 
