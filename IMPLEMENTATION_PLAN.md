@@ -3434,9 +3434,9 @@ This plan assumes the selected separate-LAN-host Home Assistant setup, one XIAO 
 
 - Software checks and local image builds passed. PlatformIO reported non-fatal tool/library deprecation and redefinition warnings. The already-running Compose containers were not recreated; the build result does not verify runtime behavior of the new images.
 - No live Lectio refresh, MitID flow, USB connection, firmware flash, physical panel/button check, or external integration check was performed. Those remain appliance acceptance work.
+- Release commit `bed1b4dd752da9b3b49a916885a1bff2cebc8c3d` was pushed to `origin/codex/direct-lectio-display`; `git ls-remote` confirmed that remote branch tip matched the local commit.
 
 #### Next steps
 
-1. Commit and push this verified direct-pipeline version to `codex/direct-lectio-display`, then record the resulting remote commit.
-2. Reauthenticate if required, confirm fresh Lectio source data and a current bitmap, then flash/provision an attached XIAO and verify panel, acknowledgement, and recovery behavior.
-3. Review integration into `main` separately; remote access, backup/recovery, and redistribution licensing remain conditional follow-up items.
+1. Reauthenticate if required, confirm fresh Lectio source data and a current bitmap, then flash/provision an attached XIAO and verify panel, acknowledgement, and recovery behavior.
+2. Review integration into `main` separately; remote access, backup/recovery, and redistribution licensing remain conditional follow-up items.
