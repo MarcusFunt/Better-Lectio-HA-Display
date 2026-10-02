@@ -13,11 +13,11 @@ Implemented software includes manual Playwright/MitID session capture, optional 
 
 ### Shortest remaining path to one working appliance
 
-1. Run the CI-matched service tests, lint, Compose validation/build, and PlatformIO build for the release branch; commit and push the direct-pipeline release.
+1. Apply the pushed release on the Compose host with the updated images and confirm service health.
 2. Reauthenticate through `/auth/browser` if required, wait for fresh successful Lectio source syncs, and confirm the bitmap preview shows a current three-day schedule.
 3. Connect the XIAO, verify its serial port and panel/controller revision, then flash and provision it through Web Serial or the host CLI.
 4. Confirm an authenticated device request and visible panel update. Check timetable layout, button acknowledgement, and recovery after a brief service/network interruption and power cycle.
-5. After the local appliance works, decide whether Tailscale remote access, backup/recovery, and licensing for wider redistribution are needed.
+5. After the local appliance works, integrate the pushed branch into `main` if that is the release target; decide whether Tailscale remote access, backup/recovery, and redistribution licensing are needed.
 
 The latest recorded live audit (2026-10-02) found `LOGIN_REQUIRED`, source errors without successful-sync timestamps, and a retained bitmap dated 2026-09-28. It found no attached XIAO serial device. Treat those as the last observed deployment state and recheck them before device provisioning. The software and firmware checks recorded through 2026-09-28 are not hardware verification.
 
