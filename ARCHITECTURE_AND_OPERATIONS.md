@@ -1,62 +1,89 @@
 # Better Lectio Display — Architecture and Operations
 
-**Status:** Current architectural baseline, superseding the Home Assistant design of 2026-09-25
-**Updated:** 2026-09-27
+**Status:** Current architecture; the earlier Home Assistant architecture was retired on 2026-09-27
+
+**Updated:** 2026-10-03
+
 **Repository:** `MarcusFunt/Better-Lectio-HA-Display`
 
 ## Goal and boundaries
 
-Show normalized Lectio lessons for today, tomorrow, and the following day in Copenhagen local time. Show cancellations, assignments, and homework in a narrow sidebar with that category priority. The output is an 800 × 480 one-bit BMP for a permanently powered, LAN-connected display. Private-calendar events are intentionally excluded.
+Display Lectio lessons for today and the next two days in `Europe/Copenhagen`, plus cancellations, assignments, and homework in that priority order. The display is an 800 × 480, one-bit e-paper panel on a private LAN. Private-calendar events are outside the current product scope.
 
-The gateway owns Lectio authentication, scraping, parsing, normalization, and caching. The display service owns the three-day model, per-source fallback, change review, rendering, bitmap storage, and authenticated device API. Firmware owns Wi-Fi connectivity, image fetching, and panel updates. The display service never logs in to Lectio or handles MitID.
+The current runtime is a direct Lectio Gateway → Display Service → device pipeline. There is no Home Assistant service, integration, HACS dependency, HA API, or HA credential in the active application or Compose stack. The repository name retains the original HA wording.
 
 ```text
-Lectio / manual MitID
-        │
-        ▼
-Lectio Gateway  ── GET /api/v1/* on private Compose network ──► Display Service
-      │                                                       │
-      │ login and preview                                     │ content-addressed BMP
-      ▼                                                       ▼
-  human browser                                       USB-provisioned firmware
+Lectio / manual MitID sign-in
+           │
+           ▼
+Lectio Gateway ── private Compose API ──► Display Service
+      │                                      │
+      │ login, diagnostics, preview           │ authenticated device API
+      ▼                                      ▼
+  human browser                         XIAO ESP32-S3 firmware
+                                      USB-provisioned settings
 ```
 
-The gateway and display service remain separate Compose services. The gateway already waits for the display diagnostics sidecar, which waits for the display service. The display service therefore has no Compose `depends_on` edge to the gateway and retries it on its existing 30-second refresh loop.
+The gateway owns authentication, Lectio requests, parsing, normalization, and source caching. The display service owns the three-day model, source fallback, change review, rendering, bitmap storage, device registry, and device API. Firmware owns Wi-Fi, image polling, panel refresh, and the short-press acknowledgement action.
 
 ## Gateway and authentication
 
-The gateway keeps the `python-lectio` lineage behind its internal adapter so other application layers consume normalized records rather than raw Lectio responses. Its unchanged source endpoints are `/api/v1/status`, `/api/v1/schedule`, `/api/v1/assignments`, `/api/v1/homework`, and `/api/v1/cancellations`. Source requests use aware `start` and exclusive `end` datetimes; source responses contain `items` plus per-source `sync` metadata. The gateway persists the authenticated session and its last-known-good source cache.
+The gateway keeps the pinned `python-lectio` dependency behind an internal adapter. Its normalized endpoints are `/api/v1/status`, `/api/v1/schedule`, `/api/v1/assignments`, `/api/v1/homework`, and `/api/v1/cancellations`. Source responses carry `items` and per-source `sync` metadata. Requests use timezone-aware start times and an exclusive end. The default source-cache TTL is 300 seconds.
 
-The user starts a temporary Playwright Chromium browser from `/auth/browser` and completes Lectio/MitID login manually. The auth browser is isolated and stopped after session capture. The page also offers student-ID setup, source diagnostics, and a preview of the newest rendered bitmap. It stores no display-to-gateway API credential. MitID automation is outside the design.
+The operator opens `/auth/browser`, starts a temporary Playwright Chromium session, and completes Lectio/MitID sign-in manually. The page also supports student-ID entry, source diagnostics, the latest bitmap preview, and USB provisioning. The auth lifecycle service starts and stops the temporary browser after capture, cancellation, or timeout. The system does not automate MitID.
 
-The gateway admin API stays loopback-bound on host port 8000. The display service calls `http://lectio-gateway:8000` inside Compose, configured by `LECTIO_GATEWAY_URL`. This internal request is deliberately credential-free. Do not publish that API on a public interface; remote human access should use Tailscale Serve and Tailnet ACLs.
+The gateway admin port 8000 binds to loopback by default. The display service calls `http://lectio-gateway:8000` over the private Compose network using `LECTIO_GATEWAY_URL`; the internal connection needs no gateway API token. Do not publish the admin API publicly. Tailscale Serve and ACLs are optional host-side remote-access configuration; the repository does not install or configure Tailscale.
 
 ## Display model and freshness
 
-At each refresh, the display client requests gateway status and the four source envelopes for Copenhagen midnight through midnight after the third visible day. It validates response shapes and timestamps before accepting items. The status request is diagnostic; each source envelope carries its own freshness. Gateway HTTP and connection failures are mapped to safe error codes without logging Lectio response content.
+The display service polls the gateway every 30 seconds and requests status plus all four source envelopes for Copenhagen midnight through the exclusive midnight after the third visible date. The gateway cache can make the effective upstream refresh cadence about five minutes. Reducing the display polling interval alone does not bypass that cache.
 
-The service maps lesson `subject`, `start`, `end`, `teacher`, and `room` directly into a chronological timeline. Assignment `title` and `due`, homework `subject`, `description`, and `target_lesson_start`, and cancellation `subject`, `reason`, and `start` form the sidebar. Completed assignments and homework for lessons already in the past are omitted. The renderer has no private-calendar input.
+Lessons use their normalized subject, start, end, teacher, and room fields on a shared timetable grid. Assignment, homework, and cancellation records use their normalized fields in the sidebar. Completed assignments and homework for lessons already past are omitted. Each source has an independent in-memory last-known-good item set and last-success time. The renderer shows stale status while retaining usable stale data. If the schedule is stale/incomplete, all sources are unavailable, or rendering fails, the current bitmap is left intact. The persisted bitmap is reloaded after restart; in-memory per-source fallback is rebuilt on the next successful poll.
 
-Each source has an independent in-memory last-known-good item set and last-successful-sync timestamp. A failed source keeps its prior items, marks that source stale, and does not create false deletion notices. A stale or expired schedule can omit an entire ISO week, so it never replaces a complete bitmap. Other stale sources can render cached items with a stale indicator. The persistent change review stores hashes of item identities and fingerprints rather than titles or descriptions. Only fresh sources advance its baseline; device acknowledgement is tied to the exact content hash shown. On migration, retired HA entity keys are pruned from the review state.
+Change review persists hashed item identities and fingerprints, not lesson titles or descriptions. Only fresh source results advance their baselines. The image shows the last acknowledgement time and pending change count. Acknowledgement is authenticated and bound to the exact content hash displayed; firmware uses a short button press to request it. The configured button mapping is a hardware candidate and requires confirmation on the actual board.
 
-The rendered image is stored as a content-addressed bitmap in the display data volume. On a first schedule failure, a complete gateway outage, or a render error, the service keeps its previous image and retries on the next loop. A restart reloads the persisted bitmap even though per-source in-memory fallback starts empty. This protects the physical display from being blanked by an upstream failure.
+## Rendering, images, and device API
 
-## Device API and firmware
+The display service renders a deterministic 800 × 480 monochrome BMP, stores it by SHA-256 content hash, and publishes a current-revision pointer. Previous images are retained by the image store. The browser diagnostics page exposes a validated preview without exposing Lectio item contents or device secrets.
 
-The display service exposes authenticated `/device/v1/status`, `/device/v1/display`, `/device/v1/image/<hash>.bmp`, and `/device/v1/acknowledge` endpoints. Device IDs and cryptographically random bearer credentials are registered in the display data volume. The USB provisioning tool optionally flashes generic firmware, registers the device, writes Wi-Fi settings and credentials over serial, reboots, and checks authenticated contact. Secrets are never compiled into firmware or authenticated by MAC address alone.
+The authenticated device endpoints are:
 
-The device checks the content hash, downloads only a changed BMP, validates it, refreshes the panel, and can acknowledge the revision it displayed. It retains its previous e-paper image through local network and service failures. Physical panel wiring, button mapping, USB provisioning, MitID, and live Lectio behavior require separate hardware or external checks; software tests and image builds alone do not verify them.
+- `GET /device/v1/status`
+- `GET /device/v1/display`
+- `GET /device/v1/image/<hash>.bmp`
+- `POST /device/v1/acknowledge`
+
+Requests identify the device and use its random bearer credential. The registry stores a one-way credential hash, supports create/list/rotate/revoke, and tracks device contact. Firmware validates the content-addressed image, downloads only when its hash changes, and records the new revision only after a successful panel refresh. Service or network failures leave the previous e-paper image visible.
+
+## Firmware and provisioning
+
+The PlatformIO target is `lectio_s3` for the XIAO ESP32-S3 800 × 480 e-paper kit. Build and flash with `make firmware-build` and `make firmware-flash`, or directly with `pio run -d firmware -e lectio_s3` and `pio run -d firmware -e lectio_s3 -t upload`. A successful build confirms compile/link; it does not confirm flash or panel behavior.
+
+Two runtime provisioning paths are available:
+
+1. **Browser Web Serial:** `/auth/browser` can provision a previously flashed board in Chrome or Edge from `localhost` or an HTTPS page. The browser sends Wi-Fi settings directly over USB and does not send or save them in the gateway. The gateway registers the device through an internal authenticated call to the display service and waits for its authenticated contact. This path does not flash firmware.
+2. **Host CLI:** `python -m tools.provision.provision_device --port COMx --server-url http://<host-lan-ip>:8001 --ssid <wifi-name> --name "Better Lectio display" --flash`. The module prompts for the Wi-Fi password without echoing it. Install its host dependency with `python -m pip install -r tools/provision/requirements.txt`. `--flash` builds and uploads the generic firmware before provisioning.
+
+Both paths send per-device configuration over USB and store it in device NVS. Device traffic uses HTTP and bearer credentials on the private LAN. Keep port 8001 restricted to the intended network and do not expose it to the public Internet until transport protection is addressed.
 
 ## Compose deployment and persistence
 
-The active Compose services are `lectio-gateway`, `lectio-auth-lifecycle`, on-demand `lectio-auth-browser`, `display-service`, and `display-diagnostics`. The diagnostics sidecar reads the display bitmap volume and provides the preview to the gateway. Its port is private to Compose. The gateway's host port 8000 and browser-view port 6080 bind to loopback by default. The device API host port 8001 also defaults to loopback; set `DISPLAY_BIND_ADDRESS` to the host's private LAN address for a physical device and restrict it with the host firewall.
+Compose defines five services: `lectio-gateway`, `lectio-auth-lifecycle`, the on-demand `lectio-auth-browser`, `display-service`, and `display-diagnostics`. The temporary browser uses the `auth-browser` profile image and is started by the lifecycle service only when requested. The diagnostics sidecar reads the display data volume read-only and supplies the private bitmap preview to the gateway.
 
-The two persistent volumes are `lectio-gateway-data` and `display-service-data`. The default Compose project name retains its historical spelling so deployed volumes remain attached during this migration. Retired HA token/config volumes are no longer mounted. Old HA settings and tokens are not read by the new services. Do not commit Lectio sessions, Wi-Fi settings, device credentials, or any other secret.
+The gateway admin port 8000 and browser view port 6080 bind to loopback by default. The device API host port 8001 also defaults to loopback; set `DISPLAY_BIND_ADDRESS` to the Compose host's private LAN address for a device on the LAN, then restrict the port with the host firewall. Keep the Compose project name at its default when upgrading an existing install so named data volumes remain attached.
 
-Remote human/admin access goes through Tailscale rather than public router forwarding, a public reverse proxy, or Funnel. The display itself needs only LAN access to the device API and does not need Tailscale.
+The three persistent named volumes are:
+
+- `lectio-gateway-data`: private Lectio session and gateway source cache.
+- `display-service-data`: image revisions, current bitmap, device registry, and hashed review state.
+- `display-provisioning-auth`: a shared internal token, writable by display-service and read-only to the gateway.
+
+Do not commit Lectio sessions, Wi-Fi settings, device secrets, provisioning tokens, or the local `.env` file. Old HA-only volumes from earlier versions are not mounted or read by the current stack; remove them only as a deliberate cleanup after confirming rollback is unnecessary.
 
 ## Operations and evidence
 
-Use `make test`, `make lint`, `make compose-config`, and `make compose-build` for software validation. Firmware uses `make firmware-build`; `make provision-device` invokes the Python provisioning module and forwards `ARGS`. The gateway health endpoint checks process readiness; source sync state and bitmap preview provide more useful operational evidence. A healthy service does not imply a current Lectio session, fresh source records, a visible panel image, or successful USB provisioning.
+Use `make test`, `make lint`, `make compose-config`, and `make compose-build` for software checks. Build firmware with `make firmware-build`; flash with `make firmware-flash`. For host provisioning, install `tools/provision/requirements.txt` and run the Python module command above. On Windows, use the built-in browser flow or the module command if GNU Make is unavailable.
 
-`IMPLEMENTATION_PLAN.md` is the canonical dated execution log and preserves the old HA implementation records as history. The two earlier HA design specs under `docs/superpowers/specs/` are superseded. Future changes to this architecture should update this document explicitly.
+The gateway health endpoint reports process readiness. `/auth/diagnostics` reports authentication and per-source states, and the login page shows the newest bitmap preview. A healthy container does not establish a current Lectio session, fresh records, a newly generated bitmap, successful device provisioning, or panel output. The latest dated runtime audit is in `IMPLEMENTATION_PLAN.md`.
+
+Physical flash, USB, Wi-Fi, panel/controller, button mapping, and network-recovery checks must be performed on the actual board. The CI firmware target and fixture/API tests do not substitute for that acceptance. The historical Home Assistant design specs under `docs/superpowers/specs/` are explicitly superseded and are retained as background only.

@@ -17,9 +17,19 @@ def test_compose_connects_display_to_private_gateway_without_startup_cycle():
     assert "depends_on" not in services["display-service"]
     assert set(services["lectio-gateway"]["depends_on"]) == {"lectio-auth-lifecycle", "display-diagnostics"}
     assert services["display-diagnostics"]["depends_on"] == {"display-service": {"condition": "service_healthy"}}
-    assert set(compose["volumes"]) == {"lectio-gateway-data", "display-service-data"}
-    assert services["lectio-gateway"]["volumes"] == ["lectio-gateway-data:/var/lib/better-lectio"]
-    assert services["display-service"]["volumes"] == ["display-service-data:/var/lib/better-lectio-display"]
+    assert set(compose["volumes"]) == {
+        "lectio-gateway-data", "display-service-data", "display-provisioning-auth"
+    }
+    assert services["lectio-gateway"]["volumes"] == [
+        "lectio-gateway-data:/var/lib/better-lectio",
+        "display-provisioning-auth:/var/lib/better-lectio-provisioning-auth:ro",
+    ]
+    assert services["display-service"]["volumes"] == [
+        "display-service-data:/var/lib/better-lectio-display",
+        "display-provisioning-auth:/var/lib/better-lectio-provisioning-auth",
+    ]
+    assert services["lectio-gateway"]["environment"]["DISPLAY_PROVISIONING_URL"] == "http://display-service:8000"
+    assert services["display-service"]["environment"]["DISPLAY_PROVISIONING_AUTH_DIR"] == "/var/lib/better-lectio-provisioning-auth"
     assert services["display-diagnostics"]["volumes"] == ["display-service-data:/var/lib/better-lectio-display:ro"]
     assert services["display-diagnostics"]["networks"] == ["default"]
     assert "ports" not in services["display-diagnostics"]

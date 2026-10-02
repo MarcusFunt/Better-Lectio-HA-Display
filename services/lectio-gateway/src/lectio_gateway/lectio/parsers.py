@@ -98,7 +98,7 @@ def _tooltip_fields(tooltip: str):
         elif ":" in line:
             key, value = line.split(":", 1)
             fields[key.strip().casefold()] = value.strip()
-        elif title is None:
+        elif title is None and not line.startswith("- "):
             title = line
         else:
             fields.setdefault("details", line)
@@ -162,7 +162,15 @@ def parse_schedule_html(
             source_id = match.group(1) if match else card.get("data-absid")
             lesson_id = str(source_id or _stable_id((lesson_day.isoformat(), tooltip)))
             source_url = urljoin(LECTIO_BASE_URL, href) if href else None
-            subject = fields.get("fag") or fields.get("subject") or subject_title
+            hold = fields.get("hold")
+            card_label = card.get_text(" ", strip=True).split("•", 1)[0].casefold()
+            subject = (
+                fields.get("fag")
+                or fields.get("subject")
+                or (hold if hold and hold.casefold() in card_label else None)
+                or subject_title
+                or hold
+            )
             details = fields.get("aflyst") or fields.get("årsag") or fields.get("details")
             lessons.append(
                 LectioLesson(

@@ -5,6 +5,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pytest
+from bs4 import BeautifulSoup
 from lectio_gateway.lectio.client import LectioClient
 from lectio_gateway.lectio.errors import (
     LectioAdapterError,
@@ -90,6 +91,23 @@ def test_schedule_parser_accepts_single_digit_hour_values():
     lessons = parse_schedule_html(html, school_id="123", iso_year=2026, iso_week=39)
     assert lessons[0].start.hour == 8
     assert lessons[0].end.hour == 9
+
+
+def test_schedule_uses_hold_as_title_when_tooltip_has_no_subject():
+    soup = BeautifulSoup((FIXTURES / "schedule.html").read_text(), "html.parser")
+    card = soup.find("a", class_="s2skemabrik")
+    card["data-tooltip"] = (
+        "21/9-2026 08:15 til 09:00\n"
+        "Se opgaven for timerne i vedhæftede PP\n"
+        "Hold: LDDU 2 TK\n"
+        "Lærer: Ada Example\n"
+        "Lokale: A1"
+    )
+    card.string = "sms bookmark LDDU 2 TK • msa • X DVR"
+
+    lessons = parse_schedule_html(str(soup), school_id="123", iso_year=2026, iso_week=39)
+
+    assert lessons[0].subject == "LDDU 2 TK"
 
 
 def test_assignment_fixture_normalizes_due_status_and_source_link():

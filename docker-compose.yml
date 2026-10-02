@@ -12,11 +12,14 @@ services:
       LECTIO_AUTH_LIFECYCLE_URL: http://lectio-auth-lifecycle:8766
       LECTIO_AUTH_BROWSER_VIEW_URL: ${LECTIO_AUTH_BROWSER_VIEW_URL:-http://localhost:6080/vnc.html?autoconnect=true&resize=scale}
       DISPLAY_DIAGNOSTICS_URL: http://display-diagnostics:8001
+      DISPLAY_PROVISIONING_URL: http://display-service:8000
+      DISPLAY_PROVISIONING_TOKEN_FILE: /var/lib/better-lectio-provisioning-auth/gateway-token
       LECTIO_AUTH_TIMEOUT_SECONDS: ${LECTIO_AUTH_TIMEOUT_SECONDS:-900}
       LECTIO_LOGIN_URL: https://www.lectio.dk/
       TZ: ${TIMEZONE:-Europe/Copenhagen}
     volumes:
       - lectio-gateway-data:/var/lib/better-lectio
+      - display-provisioning-auth:/var/lib/better-lectio-provisioning-auth:ro
     expose:
       - "8000"
     ports:
@@ -103,10 +106,12 @@ services:
     restart: unless-stopped
     environment:
       DISPLAY_DATA_DIR: /var/lib/better-lectio-display
+      DISPLAY_PROVISIONING_AUTH_DIR: /var/lib/better-lectio-provisioning-auth
       LECTIO_GATEWAY_URL: http://lectio-gateway:8000
       TZ: ${TIMEZONE:-Europe/Copenhagen}
     volumes:
       - display-service-data:/var/lib/better-lectio-display
+      - display-provisioning-auth:/var/lib/better-lectio-provisioning-auth
     expose:
       - "8000"
     ports:
@@ -160,6 +165,7 @@ services:
 volumes:
   lectio-gateway-data:
   display-service-data:
+  display-provisioning-auth:
 
 networks:
   default:

@@ -8,7 +8,7 @@ from urllib.parse import urlsplit
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request, status
-from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
 from lectio_gateway.auth.manager import (
     AuthFlowInProgress,
@@ -31,6 +31,12 @@ from lectio_gateway.lectio.models import (
     LectioHomework,
     LectioLesson,
     LectioSourceResponse,
+)
+from lectio_gateway.provisioning_client import (
+    DeviceRegistrationConflict,
+    DisplayProvisioningClient,
+    DisplayProvisioningUnavailable,
+    valid_device_id,
 )
 
 _DISPLAY_CONTENT_HASH = re.compile(r"^[a-f0-9]{64}$")
@@ -150,9 +156,11 @@ def _status_payload(current: AuthStatus) -> dict[str, object]:
     return payload
 
 
-def _check_same_host(request: Request) -> None:
+def _check_same_host(request: Request, *, require_origin: bool = False) -> None:
     origin = request.headers.get("origin")
     if origin is None:
+        if require_origin:
+            raise HTTPException(status_code=403, detail="Same-origin action required")
         return
 
     def origin_identity(value: str, *, strict_origin: bool) -> tuple[str, str, int] | None:
@@ -181,6 +189,21 @@ def _check_same_host(request: Request) -> None:
         str(request.url), strict_origin=False
     ):
         raise HTTPException(status_code=403, detail="Cross-origin action rejected")
+
+
+def _display_provisioning_client(request: Request) -> DisplayProvisioningClient:
+    configured = getattr(request.app.state, "display_provisioning_client", None)
+    if configured is not None:
+        return configured
+    return DisplayProvisioningClient(
+        os.getenv("DISPLAY_PROVISIONING_URL", "http://display-service:8000"),
+        Path(
+            os.getenv(
+                "DISPLAY_PROVISIONING_TOKEN_FILE",
+                "/var/lib/better-lectio-provisioning-auth/gateway-token",
+            )
+        ),
+    )
 
 
 @app.get("/health", include_in_schema=False)
@@ -351,6 +374,74 @@ async def api_cancellations(
     return await _source_response(request, "cancellations", start, end)
 
 
+@app.post("/auth/provisioning/devices", status_code=201, include_in_schema=False)
+async def register_provisioned_device(request: Request) -> JSONResponse:
+    _check_same_host(request, require_origin=True)
+    try:
+        payload = await request.json()
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail="Invalid device details") from error
+    device_id = payload.get("device_id") if isinstance(payload, dict) else None
+    name = payload.get("name") if isinstance(payload, dict) else None
+    if (
+        not isinstance(device_id, str)
+        or not valid_device_id(device_id)
+        or not isinstance(name, str)
+        or not name.strip()
+        or len(name.strip()) > 120
+        or any(ord(character) < 32 or ord(character) == 127 for character in name)
+    ):
+        raise HTTPException(status_code=422, detail="Enter a valid device name and ID")
+    try:
+        credential = await _display_provisioning_client(request).create(
+            name.strip(), device_id
+        )
+    except DeviceRegistrationConflict as error:
+        raise HTTPException(
+            status_code=409, detail="That device ID is already registered. Retry provisioning."
+        ) from error
+    except DisplayProvisioningUnavailable as error:
+        raise HTTPException(
+            status_code=502, detail="The display service could not register the device."
+        ) from error
+    return JSONResponse(
+        credential,
+        status_code=201,
+        headers={"Cache-Control": "no-store", "Pragma": "no-cache"},
+    )
+
+
+@app.post(
+    "/auth/provisioning/devices/{device_id}/revoke", include_in_schema=False
+)
+async def revoke_provisioned_device(device_id: str, request: Request) -> dict[str, object]:
+    _check_same_host(request, require_origin=True)
+    if not valid_device_id(device_id):
+        raise HTTPException(status_code=404, detail="Device not found")
+    try:
+        return await _display_provisioning_client(request).revoke(device_id)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail="Device not found") from error
+    except DisplayProvisioningUnavailable as error:
+        raise HTTPException(
+            status_code=502, detail="The display service could not revoke the device."
+        ) from error
+
+
+@app.get("/auth/provisioning/devices/{device_id}", include_in_schema=False)
+async def provisioned_device_status(device_id: str, request: Request) -> dict[str, object]:
+    if not valid_device_id(device_id):
+        raise HTTPException(status_code=404, detail="Device not found")
+    try:
+        return await _display_provisioning_client(request).status(device_id)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail="Device not found") from error
+    except DisplayProvisioningUnavailable as error:
+        raise HTTPException(
+            status_code=502, detail="The display service status is unavailable."
+        ) from error
+
+
 @app.post("/auth/start", status_code=status.HTTP_202_ACCEPTED)
 async def auth_start(request: Request) -> dict[str, object]:
     _check_same_host(request)
@@ -469,6 +560,24 @@ async def auth_browser(request: Request) -> HTMLResponse:
       </div>
     </div>
   </section>
+  <section class="diagnostics" aria-labelledby="usb-provisioning-heading">
+    <h2 id="usb-provisioning-heading">USB device provisioning</h2>
+    <p>Use Web Serial to connect a previously flashed XIAO ESP32-S3 over USB. This requires Chrome or Edge in a secure page context such as localhost or HTTPS. Flash firmware separately using PlatformIO.</p>
+    <form id="usb-provisioning-form">
+      <label for="usb-device-name">Device name</label>
+      <input id="usb-device-name" name="name" value="Better Lectio display" maxlength="120" required>
+      <label for="usb-server-url">Display service URL reachable by the device</label>
+      <input id="usb-server-url" name="server_url" type="url" placeholder="http://192.168.1.29:8001" autocomplete="url" required>
+      <label for="usb-wifi-ssid">Wi-Fi network name</label>
+      <input id="usb-wifi-ssid" name="ssid" maxlength="32" autocomplete="off" required>
+      <label for="usb-wifi-password">Wi-Fi password</label>
+      <input id="usb-wifi-password" name="password" type="password" maxlength="63" autocomplete="new-password">
+      <button id="usb-connect" type="submit">Connect to USB device and provision</button>
+    </form>
+    <p>Wi-Fi credentials are sent from this page directly to the connected board over USB. They are not sent to the gateway or saved in this browser.</p>
+    <p id="usb-provisioning-status" role="status" aria-live="polite">No device connected.</p>
+    <button id="usb-revoke-pending" type="button" hidden>Revoke unconfirmed device credential</button>
+  </section>
   <iframe id="browser-view" title="Temporary Lectio browser" src="about:blank" data-view-url="{view_url}" allow="clipboard-read; clipboard-write"></iframe>
   <script>
     async function refresh() {{
@@ -575,6 +684,7 @@ async def auth_browser(request: Request) -> HTMLResponse:
     setInterval(refresh, 2000);
     setInterval(refreshDiagnostics, 10000);
   </script>
+  <script src="/auth/usb-provisioning.js" defer></script>
 </body>
 </html>"""
     return HTMLResponse(
@@ -584,4 +694,18 @@ async def auth_browser(request: Request) -> HTMLResponse:
             "X-Content-Type-Options": "nosniff",
             "Referrer-Policy": "no-referrer",
         },
+    )
+
+
+@app.get("/auth/usb-provisioning.js", include_in_schema=False)
+async def usb_provisioning_script() -> Response:
+    script_path = Path(__file__).parent / "static" / "usb_provisioning.js"
+    try:
+        script = script_path.read_text(encoding="utf-8")
+    except OSError as error:
+        raise HTTPException(status_code=404, detail="Provisioning page script not found") from error
+    return Response(
+        script,
+        media_type="application/javascript",
+        headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"},
     )

@@ -105,12 +105,12 @@ def test_stale_marker_preserves_last_schedule_pixels():
         BytesIO(stale)
     ) as stale_image:
         unchanged_schedule = ImageChops.difference(
-            original_image.crop((0, 0, 646, 480)),
-            stale_image.crop((0, 0, 646, 480)),
+            original_image.crop((0, 0, 622, 480)),
+            stale_image.crop((0, 0, 622, 480)),
         )
         unchanged_sidebar_items = ImageChops.difference(
-            original_image.crop((660, 84, 780, 460)),
-            stale_image.crop((660, 84, 780, 460)),
+            original_image.crop((638, 113, 780, 460)),
+            stale_image.crop((638, 113, 780, 460)),
         )
 
     assert stale != original
@@ -121,14 +121,14 @@ def test_stale_marker_preserves_last_schedule_pixels():
 def test_schedule_sidebar_layout_keeps_the_approved_gutter_clear():
     artifact = _render_display()(_model())
     with Image.open(BytesIO(artifact.bmp)) as image:
-        assert all(image.getpixel((646, y)) == 0 for y in range(60, 460))
-        assert image.getpixel((646, 459)) == 0
-        assert image.getpixel((646, 460)) == 255
-        assert all(image.getpixel((647, y)) == 255 for y in range(60, 460))
-        assert all(image.getpixel((659, y)) == 255 for y in range(60, 460))
+        assert all(image.getpixel((622, y)) == 0 for y in range(83, 460))
+        assert image.getpixel((622, 459)) == 0
+        assert image.getpixel((622, 460)) == 255
+        assert all(image.getpixel((623, y)) == 255 for y in range(83, 460))
+        assert all(image.getpixel((637, y)) == 255 for y in range(83, 460))
 
 
-def test_dense_day_keeps_event_times_and_shows_overflow_count():
+def test_more_than_seven_periods_shows_overflow_count():
     model = _model()
     base_event = model.days[0].events[0]
     events = tuple(
@@ -139,15 +139,66 @@ def test_dense_day_keeps_event_times_and_shows_overflow_count():
             end=datetime(2026, 9, 25, 8 + index, 45, tzinfo=timezone.utc),
             title=f"Lesson {index}",
         )
+        for index in range(9)
+    )
+    eight = replace(model.days[0], events=events[:8])
+    nine = replace(model.days[0], events=events)
+    render = _render_display()
+
+    assert render(replace(model, days=(eight, *model.days[1:]))).bmp != render(
+        replace(model, days=(nine, *model.days[1:]))
+    ).bmp
+
+
+def test_empty_today_gives_room_to_four_lessons_tomorrow():
+    model = _model()
+    base_event = model.days[0].events[0]
+    tomorrow = date(2026, 9, 26)
+    lessons = tuple(
+        replace(
+            base_event,
+            id=f"tomorrow-{index}",
+            start=datetime(2026, 9, 26, 8 + index, 0, tzinfo=timezone.utc),
+            end=datetime(2026, 9, 26, 8 + index, 45, tzinfo=timezone.utc),
+            title=f"Lesson {index}",
+        )
         for index in range(4)
     )
-    dense_day = replace(model.days[0], events=events)
-    dense_model = replace(model, days=(dense_day, *model.days[1:]))
-    artifact = _render_display()(dense_model)
+    days = (
+        replace(model.days[0], events=()),
+        replace(model.days[1], date=tomorrow, events=lessons),
+        model.days[2],
+    )
+    fourth_changed = (*lessons[:3], replace(lessons[3], title="Changed fourth lesson"))
+    render = _render_display()
 
+    original = render(replace(model, days=days))
+    changed = render(
+        replace(model, days=(days[0], replace(days[1], events=fourth_changed), days[2]))
+    )
+
+    assert original.bmp != changed.bmp
+
+
+def test_same_time_lessons_share_a_timetable_row_across_days():
+    model = _model()
+    today_event = model.days[0].events[0]
+    tomorrow_event = replace(
+        today_event,
+        id="tomorrow-lesson",
+        start=datetime(2026, 9, 26, 8, 0, tzinfo=timezone.utc),
+        end=datetime(2026, 9, 26, 8, 45, tzinfo=timezone.utc),
+    )
+    days = (
+        model.days[0],
+        replace(model.days[1], events=(tomorrow_event,)),
+        model.days[2],
+    )
+
+    artifact = _render_display()(replace(model, days=days))
     with Image.open(BytesIO(artifact.bmp)) as image:
-        assert _contains_ink(image, (26, 88, 132, 109))
-        assert _contains_ink(image, (132, 150, 646, 180))
+        assert all(image.getpixel((97, y)) == 0 for y in range(125, 160))
+        assert all(image.getpixel((273, y)) == 0 for y in range(125, 160))
 
 
 def test_long_title_does_not_remove_teacher_and_room_details():
@@ -194,7 +245,7 @@ def test_all_day_and_timed_events_render_when_optional_details_are_missing():
     with Image.open(BytesIO(artifact.bmp)) as image:
         assert _contains_ink(image, (26, 88, 132, 109))
         assert _contains_ink(image, (26, 123, 132, 144))
-        assert not _contains_ink(image, (132, 140, 646, 160))
+        assert not _contains_ink(image, (132, 143, 266, 158))
 
 
 def test_multiword_teacher_and_room_are_abbreviated_in_schedule_details():

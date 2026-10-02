@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hmac
 import logging
 import os
 import re
@@ -11,7 +12,7 @@ from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
 from fastapi import Body, FastAPI, HTTPException, Request
-from starlette.responses import Response
+from starlette.responses import JSONResponse, Response
 
 from .change_tracker import DisplayChangeSummary, DisplayChangeTracker
 from .device_registry import DeviceRecord, DeviceRegistry
@@ -19,6 +20,7 @@ from .gateway_client import LectioGatewayClient
 from .image_store import DisplayImageStore
 from .model import DisplayModel
 from .model_service import DisplayModelService
+from .provisioning_auth import ProvisioningTokenStore
 from .renderer import render_display_model
 
 _LOGGER = logging.getLogger(__name__)
@@ -118,6 +120,15 @@ async def lifespan(app: FastAPI):
     )
     backend = DisplayBackend(data_dir)
     app.state.display_backend = backend
+    provisioning_auth_dir = Path(
+        os.getenv(
+            "DISPLAY_PROVISIONING_AUTH_DIR",
+            "/var/lib/better-lectio-provisioning-auth",
+        )
+    )
+    app.state.provisioning_token = ProvisioningTokenStore(
+        provisioning_auth_dir
+    ).load_or_create()
     async with LectioGatewayClient(os.getenv("LECTIO_GATEWAY_URL", "http://lectio-gateway:8000")) as client:
         backend.set_gateway(client)
         refresh_task = asyncio.create_task(_refresh_loop(backend))
@@ -136,6 +147,86 @@ async def _refresh_loop(backend: DisplayBackend) -> None:
 
 
 app = FastAPI(title="Better Lectio Display Service", lifespan=lifespan)
+
+
+@app.post(
+    "/internal/v1/provisioning/devices",
+    status_code=201,
+    include_in_schema=False,
+)
+async def provision_device(request: Request, payload: dict[str, object] = Body(...)) -> Response:
+    _require_provisioning_token(request)
+    device_id = payload.get("device_id")
+    name = payload.get("name")
+    if (
+        not isinstance(device_id, str)
+        or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", device_id)
+        or not isinstance(name, str)
+        or not name.strip()
+        or len(name.strip()) > 120
+        or any(ord(character) < 32 or ord(character) == 127 for character in name)
+    ):
+        raise HTTPException(status_code=422, detail="Invalid device provisioning details")
+    try:
+        credential = _backend(request).devices.create(name, device_id=device_id)
+    except ValueError as error:
+        if "already exists" in str(error):
+            raise HTTPException(status_code=409, detail="Device ID is already registered") from error
+        raise HTTPException(status_code=422, detail="Invalid device provisioning details") from error
+    return JSONResponse(
+        {
+            "device_id": credential.record.device_id,
+            "device_secret": credential.secret,
+        },
+        status_code=201,
+        headers={"Cache-Control": "no-store", "Pragma": "no-cache"},
+    )
+
+
+@app.post(
+    "/internal/v1/provisioning/devices/{device_id}/revoke",
+    include_in_schema=False,
+)
+async def revoke_provisioned_device(device_id: str, request: Request) -> dict[str, object]:
+    _require_provisioning_token(request)
+    try:
+        _backend(request).devices.revoke(device_id)
+    except (KeyError, ValueError) as error:
+        raise HTTPException(status_code=404, detail="Device not found") from error
+    return {"device_id": device_id, "revoked": True}
+
+
+@app.get(
+    "/internal/v1/provisioning/devices/{device_id}", include_in_schema=False
+)
+async def provisioned_device_status(device_id: str, request: Request) -> dict[str, object]:
+    _require_provisioning_token(request)
+    try:
+        record = _backend(request).devices.get(device_id)
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail="Device not found") from error
+    if record is None:
+        raise HTTPException(status_code=404, detail="Device not found")
+    return {
+        "device_id": record.device_id,
+        "registered": not record.revoked,
+        "last_seen": record.last_seen,
+    }
+
+
+def _require_provisioning_token(request: Request) -> None:
+    expected = getattr(request.app.state, "provisioning_token", None)
+    authorization = request.headers.get("authorization", "")
+    parts = authorization.strip().split(None, 1)
+    candidate = (
+        parts[1].strip()
+        if len(parts) == 2 and parts[0].casefold() == "bearer"
+        else ""
+    )
+    if not isinstance(expected, str) or len(expected) < 40:
+        raise HTTPException(status_code=503, detail="Provisioning is not configured")
+    if not hmac.compare_digest(expected, candidate):
+        raise HTTPException(status_code=401, detail="Invalid provisioning credential")
 
 
 @app.get("/health", include_in_schema=False)

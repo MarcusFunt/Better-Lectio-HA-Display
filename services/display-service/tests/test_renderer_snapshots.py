@@ -22,10 +22,13 @@ _SNAPSHOTS = Path(__file__).with_name("snapshots")
         "cancellation_heavy",
         "assignment_heavy",
         "homework_fallback",
+        "busy_tomorrow",
+        "live_status",
     ),
 )
 def test_renderer_matches_visual_snapshot(scenario: str):
-    artifact = render_display(_scenarios()[scenario])
+    status = {"show_status": True, "change_count": 2} if scenario == "live_status" else {}
+    artifact = render_display(_scenarios()[scenario], **status)
     snapshot_path = _SNAPSHOTS / f"{scenario}.png"
 
     assert snapshot_path.is_file(), f"Missing renderer snapshot: {snapshot_path.name}"
@@ -45,6 +48,8 @@ def _scenarios() -> dict[str, DisplayModel]:
         "cancellation_heavy": _sidebar_model("cancellation"),
         "assignment_heavy": _sidebar_model("assignment"),
         "homework_fallback": _homework_model(),
+        "busy_tomorrow": _busy_tomorrow_model(),
+        "live_status": _normal_model(),
     }
 
 
@@ -98,6 +103,31 @@ def _dense_model() -> DisplayModel:
         )
         days.append(_day(day_date, *events))
     return _model(tuple(days), ())
+
+
+def _busy_tomorrow_model() -> DisplayModel:
+    return _model(
+        (
+            _day(_DATES[0]),
+            _day(
+                _DATES[1],
+                *(
+                    _event(
+                        f"tomorrow-{index}",
+                        8 + index,
+                        0,
+                        f"Lesson {index + 1}",
+                        teacher="A. Nielsen",
+                        room="1.65",
+                        event_date=_DATES[1],
+                    )
+                    for index in range(4)
+                ),
+            ),
+            _day(_DATES[2], _event("third-day", 10, 0, "Biology", event_date=_DATES[2])),
+        ),
+        (_item("assignment", 1, "Written exercise", "Mathematics", _DATES[1]),),
+    )
 
 
 def _long_label_model() -> DisplayModel:

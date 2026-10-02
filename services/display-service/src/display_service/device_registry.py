@@ -102,6 +102,11 @@ class DeviceRegistry:
             self._write(records)
         return updated
 
+    def get(self, device_id: str) -> DeviceRecord | None:
+        _validate_device_id(device_id)
+        with self._exclusive_lock():
+            return self._read().get(device_id)
+
     def list_devices(self) -> tuple[DeviceRecord, ...]:
         with self._exclusive_lock():
             records = self._read()

@@ -1,12 +1,33 @@
-# Better Lectio HA Display — Implementation Plan
+# Better Lectio Display — Implementation Plan
 
-**Status:** Historical implementation roadmap; Home Assistant milestones were superseded on 2026-09-27. The dated Agent execution log below remains the canonical progress and evidence record.
-**Date:** 2026-09-25  
+**Status:** The original Home Assistant roadmap below is historical. The active product is the direct Lectio Gateway → Display Service → XIAO display pipeline, adopted 2026-09-27.
+**Current review:** 2026-10-03
+
 **Target repository:** `MarcusFunt/Better-Lectio-HA-Display`
 
-The older milestones below record the original Home Assistant design. Current architecture and next steps are in `ARCHITECTURE_AND_OPERATIONS.md` and the latest dated Agent execution log entry. Historical execution entries are preserved without retroactive edits.
+## Active project status — 2026-10-03
 
-The order is deliberately chosen to validate the riskiest integration boundaries early and to prevent the renderer, Home Assistant integration, and firmware from becoming coupled to temporary authentication details.
+The current project has no Home Assistant runtime service, custom integration, HACS setup, private-calendar input, or HA credentials. The active Compose stack connects the Lectio Gateway directly to the Display Service and the display device.
+
+Implemented software includes manual Playwright/MitID session capture, optional student-ID entry, normalized per-source Lectio caching, the Copenhagen three-day timetable and prioritized sidebar, monochrome rendering, persistent content-addressed images, stale-data handling, hashed change review with exact-revision acknowledgement, the authenticated device API and registry, XIAO firmware, and both browser Web Serial and host-CLI USB provisioning. The README and architecture guide describe these active interfaces and defaults.
+
+### Shortest remaining path to one working appliance
+
+1. Run the CI-matched service tests, lint, Compose validation/build, and PlatformIO build for the release branch; commit and push the direct-pipeline release.
+2. Reauthenticate through `/auth/browser` if required, wait for fresh successful Lectio source syncs, and confirm the bitmap preview shows a current three-day schedule.
+3. Connect the XIAO, verify its serial port and panel/controller revision, then flash and provision it through Web Serial or the host CLI.
+4. Confirm an authenticated device request and visible panel update. Check timetable layout, button acknowledgement, and recovery after a brief service/network interruption and power cycle.
+5. After the local appliance works, decide whether Tailscale remote access, backup/recovery, and licensing for wider redistribution are needed.
+
+The latest recorded live audit (2026-10-02) found `LOGIN_REQUIRED`, source errors without successful-sync timestamps, and a retained bitmap dated 2026-09-28. It found no attached XIAO serial device. Treat those as the last observed deployment state and recheck them before device provisioning. The software and firmware checks recorded through 2026-09-28 are not hardware verification.
+
+The dated Agent execution log below is the canonical evidence record. Its older entries preserve the history of the retired HA implementation; they are not active requirements. The two HA design specs are labeled superseded. The original milestone roadmap that follows documents that former design and should not drive current implementation.
+
+---
+
+## Original Home Assistant roadmap (historical)
+
+The principles and milestones below were written for the retired Home Assistant architecture and are preserved as project history.
 
 ---
 
@@ -3296,3 +3317,126 @@ This plan assumes the selected separate-LAN-host Home Assistant setup, one XIAO 
 
 1. Connect the XIAO with a USB data cable and identify its new serial port, excluding Bluetooth COM4/COM5; if needed, use the board's bootloader mode to expose the upload port.
 2. When the user is ready to upload, run the prepared provisioning command with the detected port, enter the board's Wi-Fi details through its prompts, and verify authenticated service contact and the physical panel image.
+
+### 2026-09-27 — Align the display with Lectio's timetable grid
+
+#### Evidence and findings
+
+- Read the repository Markdown recursively before work and compared the requested reference image with the direct-pipeline architecture and current renderer. The former renderer divided the main area into three stacked day sections; on an empty Sunday, Monday's lessons were constrained to one short section. The user reference instead uses a time column and day columns with aligned periods.
+- The live gateway initially returned five of seven relevant lessons with a null `subject`. The corresponding Lectio tooltips had a `Hold` field carrying the course name. One tooltip also began with a lesson note, while the card's visible label began with the `Hold` value. The old parser preferred the note or an unkeyed title and did not fall back to `Hold`.
+- The local gateway's persistent schedule cache has a 300-second TTL. Its first refresh after the parser update cleared the five missing subjects. The directly fetched week-40 page parsed in the final gateway image gives the 13:20 lesson its course name rather than its note. The subsequent normal cache refresh at 22:52 local time produced a new display bitmap with that course name visible.
+
+#### Tasks completed
+
+- Replaced the stacked schedule renderer with a three-day timetable: shared period/time rows, one column per day, readable lesson cards, teacher and room details, and a visible overflow row when more than seven time slots exist. Enlarged and simplified the prioritized sidebar and repositioned the header, review status, and stale marker for the 800×480 one-bit display.
+- Added renderer regressions for lessons on a busy following day, aligned same-time lessons, overflow, and updated visual snapshots including busy-tomorrow and live-status scenarios.
+- Updated schedule parsing to use the `Hold` field when the Lectio card label identifies it as the displayed course, while retaining explicit `Fag`/`Subject` and genuine tooltip titles. Added a sanitized regression for a card whose tooltip begins with a lesson note. The regression failed before the parser correction and passed after it.
+- Rebuilt and recreated the local display service and Lectio gateway containers without changing their persistent volumes. Saved an 800×480, 1-bit live preview outside the repository for visual review.
+
+#### How it went
+
+- The complete Python/fixture suite in a disposable Python 3.12 container passed **175 tests**; Ruff selected repository checks, `docker compose config --quiet`, and `git diff --check` passed. The display and gateway containers reported healthy after recreation. A gateway schedule query after the initial cache expiry reported seven relevant lessons and zero missing subjects. Direct parsing in the final gateway image confirmed the remaining note-title case resolves to its course name.
+- The final live preview confirms the requested grid structure, aligned periods, sidebar, the corrected course title, and the 800×480 one-bit bitmap format. The final preview hash is `78203995a01e4e914f932c1666f0a514dce15938e6b0f58c003e6aa26c4993f0`; the matching BMP/PNG preview is saved under `C:/Users/marcu/.codex/visualizations/2026/09/27/01a0e414-bef8-7871-b11b-0518cefbb0b3/`. No physical display fetch, firmware flash, USB provisioning, or panel output was tested.
+
+#### Next steps
+
+1. When the XIAO is connected, provision it and verify authenticated fetch, acknowledgement, and the physical 800×480 panel output.
+
+### 2026-09-28 — Add Web Serial USB provisioning to the Lectio page
+
+#### Evidence and findings
+
+- Read every repository Markdown file recursively before implementation and compared the request with the approved Web Serial design and the service boundaries in `ARCHITECTURE_AND_OPERATIONS.md`. The display service remains the owner of device credentials; the gateway only exposes the browser-facing same-origin flow and calls the display service over the Compose network.
+- The existing firmware provisioning protocol is newline-delimited JSON at 115200 baud: the page sends `hello`, waits for `ready`, then sends the version-1 `provision` payload and expects `ok` or `error`. Device authentication status is available from the existing registry's `last_seen` value.
+- The working tree already contained renderer, snapshot, and Lectio parser edits before this feature work. Those changes were preserved; no physical device or live USB session was available for verification.
+
+#### Tasks completed
+
+- Added USB provisioning controls to `/auth/browser` and a packaged Web Serial client script. The page validates the device-reachable display URL and Wi-Fi fields, selects a serial port through the browser, performs the firmware handshake, writes configuration over USB, and waits for the device's authenticated service contact.
+- Added same-origin gateway registration, status, and revoke routes. The gateway validates device identity/name and forwards no Wi-Fi fields. The one-time device secret response is marked `no-store`; error paths attempt to revoke credentials created before a failed USB write, and a manual revoke control remains available when write outcome is uncertain.
+- Added authenticated internal provisioning routes to display-service, a persistent shared token with restricted file permissions, a hash-only device registry lookup, and a named Compose volume mounted read/write by display-service and read-only by the gateway. Firmware flashing remains the separate PlatformIO step shown on the page.
+- Added route/client/registry/Compose tests and included the browser script in the gateway package.
+
+#### How it went
+
+- Full repository Python suite passed: **184 passed**. Selected Ruff checks passed. `node --check` passed for the Web Serial script, `docker compose config --quiet` passed, `git diff --check` passed, and both affected Docker images built successfully. A container check confirmed the Web Serial script is present in the built gateway package.
+- No running Compose services were recreated or restarted. No browser serial session, USB provisioning, Wi-Fi join, firmware flash, or physical device authentication was performed; those hardware steps remain unverified.
+
+#### Next steps
+
+1. Apply the updated Compose stack when ready, then open `/auth/browser` in Chrome or Edge over localhost/HTTPS.
+2. Connect the previously flashed XIAO by USB, enter its reachable display URL and Wi-Fi details, provision it, and verify that authenticated service contact is observed.
+
+### 2026-09-28 — Recreate Compose services for USB provisioning
+
+#### Evidence and findings
+
+- Before the restart, the four Compose services were running and healthy on the previous gateway/display image IDs. The USB provisioning auth volume did not yet exist.
+- `docker compose up -d --force-recreate` created `display-provisioning-auth` and recreated all four defined services in dependency order. No orphan containers or unrelated Docker services were removed.
+
+#### Tasks completed
+
+- Recreated `lectio-auth-lifecycle`, `display-service`, `display-diagnostics`, and `lectio-gateway` from the current Compose configuration and images.
+
+#### How it went
+
+- `docker compose ps --all` showed all four services healthy after recreation. Gateway `/health`, `/auth/browser`, and `/auth/usb-provisioning.js`, plus display-service `/health`, each returned HTTP 200.
+- This verifies the services and page endpoints after restart; no USB device was connected and no physical provisioning was performed.
+
+#### Next steps
+
+1. Open the browser provisioning page and connect the XIAO when it is available for USB provisioning.
+
+### 2026-10-02 — Audit remaining work and fastest completion path
+
+#### Evidence and findings
+
+- Read all 27 repository Markdown files recursively before inspecting code or runtime, including the complete implementation log and the superseded design specs.
+- The current checkout is `codex/direct-lectio-display` at `8956578`, tracking the same remote branch tip. It is three commits ahead of `main` (`34d03ef`) and has 29 modified/untracked working-tree entries, including renderer, gateway parser, provisioning UI/API, Compose, tests, and this plan. No open PR targets this branch. Preserve these changes; the direct-pipeline deployment and latest Web Serial work are not yet integrated into `main`.
+- `docker compose ps --all` shows the four current services healthy. Gateway is loopback-bound at port 8000 and display service is LAN-bound at `192.168.1.29:8001`.
+- A read-only call to the sanitized `/auth/diagnostics` endpoint at 2026-10-02 21:12 UTC returned `LOGIN_REQUIRED`, no student ID available, and `error` for schedule, assignments, homework, and cancellations with no successful-sync timestamps. A content-addressed bitmap remains available, but its generated timestamp is 2026-09-28 04:03 CEST. The running services are healthy; the current data path is not authenticated or fresh.
+- Windows Ports inventory shows Bluetooth COM4 and COM5 only; no XIAO USB serial device is connected. The firmware, bounded USB provisioning protocol, host provisioner, device registry, and acknowledgement path exist in the checkout, but no physical flash, provisioning, fetch, panel refresh, or button test has been observed.
+- The latest recorded implementation verification in this plan is the 2026-09-28 entry: 184 repository tests, selected Ruff checks, JavaScript syntax, Compose validation, and affected image builds passed. No tests or builds were rerun for this audit, and no current GitHub Actions run is listed for `codex/direct-lectio-display`.
+
+#### Tasks completed
+
+- Compared the actual branch/worktree, deployed service state, safe gateway/display diagnostics, and available serial ports with the current architecture and previous next steps.
+- Identified the smallest appliance-completion path: restore authenticated fresh Lectio data, create a fresh bitmap, provision one connected XIAO, and verify the physical panel and recovery behavior. Kept release integration and optional operations work separate from that path.
+
+#### How it went
+
+- This was a read-only status audit plus this required log entry. No application or configuration files were changed; no test suite, firmware build, or hardware operation was run. The current uncommitted changes remain intact.
+- Historical HACS/Home Assistant setup-wizard items are superseded by the direct Lectio Gateway → Display Service design dated 2026-09-27. They are not part of the active appliance path.
+
+#### Next steps
+
+1. Reauthenticate manually at `/auth/browser`, confirm `AUTHENTICATED` and student-ID availability, then wait for fresh successful syncs from all four sources and a bitmap timestamp/hash newer than the current 2026-09-28 image. If the student ID remains unavailable, enter it through the existing setup field and confirm it is accepted.
+2. Connect the XIAO with a USB data cable; verify its COM port and exact panel/controller revision. Keep the server URL reachable at the host's reserved private LAN address and TCP port 8001.
+3. Validate the current dirty branch once with the CI-matched service suite, lint, Compose config/build, and `pio run -d firmware -e lectio_s3`; resolve failures before treating the local provisioning UI/API and renderer/parser edits as release-ready.
+4. Flash/provision one board using one supported flow, then verify authenticated status/metadata/image fetch, visible current timetable, short-press acknowledgement, and recovery after a brief network interruption and power cycle. Check overflow/orientation on the actual panel.
+5. Commit the preserved working-tree changes, push the branch, review/integrate it into `main`, and confirm GitHub CI passes on the integrated direct-pipeline code.
+6. After one appliance works, finish remote admin through Tailscale Serve/ACLs and backup/recovery checks if remote operation is part of the target. Resolve licensing before public redistribution. Phase-2/Phase-3 login research remains conditional; the current manual browser/MitID flow already fits the architecture.
+
+### 2026-10-03 — Release the direct Lectio pipeline and align active documentation
+
+#### Evidence and findings
+
+- Read all 27 repository Markdown files recursively before reviewing the project state. The current runtime is the direct Lectio Gateway → Display Service → XIAO pipeline; older Home Assistant design material is explicitly historical or superseded.
+- The requested release changes were present in the working tree on `codex/direct-lectio-display`, tracking `origin/codex/direct-lectio-display`. They include the Web Serial provisioning page and gateway/display provisioning APIs, renderer and Lectio parser updates, tests, snapshots, and Compose changes.
+- Rewrote the active README and architecture guide against the current Compose services, routes, volumes, LAN bindings, retry/cache behavior, firmware target, and browser/CLI provisioning paths. Added a current-state summary and shortest appliance completion path above this historical plan.
+
+#### Tasks completed
+
+- Reconciled the active project documentation with the no-Home-Assistant implementation and kept the retired HA plan/specs as clearly labeled history.
+- Validated the branch with the CI-matched Python suite (**184 passed**), Ruff lint, `node --check` for the browser provisioning script, `docker compose config --quiet`, and `docker compose --profile auth-browser build` (all five images built). `pio run -d firmware -e lectio_s3` compiled and linked successfully. `git diff --check` passed after correcting Markdown whitespace.
+
+#### How it went
+
+- Software checks and local image builds passed. PlatformIO reported non-fatal tool/library deprecation and redefinition warnings. The already-running Compose containers were not recreated; the build result does not verify runtime behavior of the new images.
+- No live Lectio refresh, MitID flow, USB connection, firmware flash, physical panel/button check, or external integration check was performed. Those remain appliance acceptance work.
+
+#### Next steps
+
+1. Commit and push this verified direct-pipeline version to `codex/direct-lectio-display`, then record the resulting remote commit.
+2. Reauthenticate if required, confirm fresh Lectio source data and a current bitmap, then flash/provision an attached XIAO and verify panel, acknowledgement, and recovery behavior.
+3. Review integration into `main` separately; remote access, backup/recovery, and redistribution licensing remain conditional follow-up items.
