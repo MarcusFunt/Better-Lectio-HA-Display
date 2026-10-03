@@ -27,7 +27,13 @@ lint = ["ruff>=0.9,<1"]
 where = ["src"]
 
 [tool.setuptools.package-data]
-lectio_gateway = ["static/*.js"]
+lectio_gateway = [
+    "static/*.js",
+    "static/firmware/*.bin",
+    "static/firmware/*.json",
+    "static/vendor/*.js",
+    "static/vendor/*.txt",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

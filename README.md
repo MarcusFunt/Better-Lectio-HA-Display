@@ -29,7 +29,9 @@ The gateway owns the Lectio session, parsing, normalization, and per-source cach
    The gateway, display service, diagnostics sidecar, and auth lifecycle service start with Compose. The temporary Chromium browser starts when requested from the login page.
 3. On the Compose host, open `http://localhost:8000/auth/browser`. Start the temporary browser and complete Lectio/MitID sign-in yourself. Enter your numeric Lectio student ID on the page if requested. The gateway retains the authenticated session and source cache in its data volume.
 4. Check the four Lectio source states and the newest bitmap preview. The display service retries every 30 seconds; the gateway's source cache defaults to a five-minute TTL. Wait for fresh source timestamps before relying on the preview.
-5. Build and flash the `lectio_s3` firmware to the XIAO ESP32-S3:
+5. Flash the `lectio_s3` firmware from the browser. On the computer connected to the board, open `/auth/browser` in Chrome or Edge using `localhost` or an HTTPS address, connect the XIAO by USB, and choose **Flash Lectio firmware**. The page downloads the packaged image from the gateway, checks its SHA-256, and flashes it directly over USB. PlatformIO and Python are not needed on this computer. If bootloader detection fails, hold BOOT, tap RESET, release BOOT, and retry.
+
+   To build and flash from a development computer instead, use PlatformIO:
 
    ```sh
    make firmware-build
@@ -38,7 +40,7 @@ The gateway owns the Lectio session, parsing, normalization, and per-source cach
 
 6. Provision the flashed board using one of these paths:
 
-   - **Browser:** Open `/auth/browser` in Chrome or Edge on `localhost` or an HTTPS origin. Connect the board over USB, enter its device-reachable display URL and Wi-Fi name/password, and choose **Connect to USB device and provision**. Web Serial sends the Wi-Fi settings directly to the board; the page registers its device credential and waits for authenticated service contact. Browser provisioning does not flash firmware.
+   - **Browser:** In the same page, enter its device-reachable display URL and Wi-Fi name/password, then choose **Connect to USB device and provision**. Web Serial sends Wi-Fi settings directly to the board; the page registers its device credential and waits for authenticated service contact. Flashing and provisioning are separate steps; select the USB board again when the browser requests it.
    - **Host CLI:** Install the host provisioning dependency and run the module command. `--flash` builds and flashes the firmware before provisioning; the Wi-Fi password is prompted for without echo.
 
      ```sh
@@ -65,8 +67,11 @@ make lint
 make compose-config
 make compose-build
 make firmware-build
+make firmware-web-package
 ```
 
 `make test` runs the Python service and provisioning tests. `make lint` runs the configured Ruff checks. The firmware build uses PlatformIO. For provisioning from Python, install `tools/provision/requirements.txt` first. The built-in CLI and browser flow require a connected USB board for hardware verification.
+
+After changing firmware, run `make firmware-web-package` to rebuild and refresh the checked-in browser firmware image and checksum manifest. Without GNU Make, run `pio run -d firmware -e lectio_s3` followed by `python -m tools.provision.package_web_firmware`. The gateway serves these files to remote browser clients from the same origin as `/auth/browser`; clients do not need PlatformIO. Remote clients must open the page over HTTPS for Web Serial. The gateway admin port remains loopback-bound by default, so use a trusted host-side HTTPS reverse proxy or equivalent remote-access setup rather than exposing port 8000 directly.
 
 See [ARCHITECTURE_AND_OPERATIONS.md](ARCHITECTURE_AND_OPERATIONS.md) for current service and deployment boundaries, and [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) for the active completion path and dated evidence. The earlier `trmnl_schedule/` prototype and `legacy/` units remain historical code and do not define the current runtime.

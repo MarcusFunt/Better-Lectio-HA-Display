@@ -59,9 +59,11 @@ Requests identify the device and use its random bearer credential. The registry 
 
 The PlatformIO target is `lectio_s3` for the XIAO ESP32-S3 800 × 480 e-paper kit. Build and flash with `make firmware-build` and `make firmware-flash`, or directly with `pio run -d firmware -e lectio_s3` and `pio run -d firmware -e lectio_s3 -t upload`. A successful build confirms compile/link; it does not confirm flash or panel behavior.
 
-Two runtime provisioning paths are available:
+The gateway package includes the merged `lectio_s3` firmware image and a manifest containing its size and SHA-256. The page downloads the same-origin artifact, checks size and checksum, verifies that the connected chip is an ESP32-S3, and flashes the image at offset zero using the vendored Espressif `esptool-js` Web Serial library. No PlatformIO installation is needed on the browser computer. Firmware flash and credential provisioning are separate page actions so the board can reboot between them.
 
-1. **Browser Web Serial:** `/auth/browser` can provision a previously flashed board in Chrome or Edge from `localhost` or an HTTPS page. The browser sends Wi-Fi settings directly over USB and does not send or save them in the gateway. The gateway registers the device through an internal authenticated call to the display service and waits for its authenticated contact. This path does not flash firmware.
+Two provisioning paths are available:
+
+1. **Browser Web Serial:** `/auth/browser` can flash and provision the board from Chrome or Edge on `localhost` or an HTTPS page. A remote computer only needs a browser, a USB cable, and network access to the gateway; it does not need to run the backend or install PlatformIO. For remote computers, serve the page over HTTPS through trusted host-side access; a plain LAN HTTP address is not a secure context for Web Serial. The browser sends Wi-Fi settings directly over USB and does not send or save them in the gateway. The gateway registers the device through an internal authenticated call to the display service and waits for its authenticated contact.
 2. **Host CLI:** `python -m tools.provision.provision_device --port COMx --server-url http://<host-lan-ip>:8001 --ssid <wifi-name> --name "Better Lectio display" --flash`. The module prompts for the Wi-Fi password without echoing it. Install its host dependency with `python -m pip install -r tools/provision/requirements.txt`. `--flash` builds and uploads the generic firmware before provisioning.
 
 Both paths send per-device configuration over USB and store it in device NVS. Device traffic uses HTTP and bearer credentials on the private LAN. Keep port 8001 restricted to the intended network and do not expose it to the public Internet until transport protection is addressed.
@@ -82,7 +84,7 @@ Do not commit Lectio sessions, Wi-Fi settings, device secrets, provisioning toke
 
 ## Operations and evidence
 
-Use `make test`, `make lint`, `make compose-config`, and `make compose-build` for software checks. Build firmware with `make firmware-build`; flash with `make firmware-flash`. For host provisioning, install `tools/provision/requirements.txt` and run the Python module command above. On Windows, use the built-in browser flow or the module command if GNU Make is unavailable.
+Use `make test`, `make lint`, `make compose-config`, and `make compose-build` for software checks. Build firmware with `make firmware-build`; refresh the firmware served by the browser with `make firmware-web-package`; flash locally with `make firmware-flash`. For host provisioning, install `tools/provision/requirements.txt` and run the Python module command above. On Windows, use the browser flow or the Python module command if GNU Make is unavailable. The browser artifact is checked into the gateway package so browser clients fetch it from the backend without local build tools.
 
 The gateway health endpoint reports process readiness. `/auth/diagnostics` reports authentication and per-source states, and the login page shows the newest bitmap preview. A healthy container does not establish a current Lectio session, fresh records, a newly generated bitmap, successful device provisioning, or panel output. The latest dated runtime audit is in `IMPLEMENTATION_PLAN.md`.
 

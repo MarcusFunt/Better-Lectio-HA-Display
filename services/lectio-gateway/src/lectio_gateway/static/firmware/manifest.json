@@ -1,0 +1,12 @@
+{
+  "target": "lectio_s3",
+  "chip": "ESP32-S3",
+  "version": "463f2a12d74c",
+  "file": "lectio_s3_merged.bin",
+  "flash_address": "0x0",
+  "flash_mode": "dio",
+  "flash_frequency": "40m",
+  "flash_size": "4MB",
+  "size_bytes": 1238160,
+  "sha256": "f4d0994d5b849585291cf61e98c72cf3efdb0216b1bc6b233ff00a5a70e87fb0"
+}

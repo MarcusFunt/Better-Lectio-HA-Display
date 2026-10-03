@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 from pathlib import Path
 
 from httpx import ASGITransport, AsyncClient
@@ -143,9 +144,11 @@ def test_login_page_links_web_serial_workflow_and_keeps_credentials_out_of_url(t
             assert page.status_code == 200
             assert 'id="usb-provisioning-form"' in page.text
             assert 'id="usb-connect"' in page.text
+            assert 'id="usb-flash-firmware"' in page.text
             assert "/auth/usb-provisioning.js" in page.text
+            assert "/auth/usb-flashing.js" in page.text
             assert "Web Serial" in page.text
-            assert "Flash firmware separately" in page.text
+            assert "Flashing and provisioning are separate steps." in page.text
             assert script.status_code == 200
             assert "navigator.serial.requestPort" in script.text
             assert "wifi_password" in script.text
@@ -156,5 +159,41 @@ def test_login_page_links_web_serial_workflow_and_keeps_credentials_out_of_url(t
                 del app.state.auth_manager
             else:
                 app.state.auth_manager = previous_manager
+
+    asyncio.run(run())
+
+
+def test_web_firmware_flash_assets_are_served_with_matching_manifest():
+    async def run():
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            manifest_response = await client.get("/auth/firmware/manifest.json")
+            firmware_response = await client.get(
+                "/auth/firmware/lectio_s3_merged.bin"
+            )
+            flasher_response = await client.get("/auth/esptool-js-v0.7.0.js")
+            script_response = await client.get("/auth/usb-flashing.js")
+
+        assert manifest_response.status_code == 200
+        assert firmware_response.status_code == 200
+        assert flasher_response.status_code == 200
+        assert script_response.status_code == 200
+
+        manifest = manifest_response.json()
+        assert manifest["target"] == "lectio_s3"
+        assert manifest["chip"] == "ESP32-S3"
+        assert manifest["flash_address"] == "0x0"
+        assert manifest["size_bytes"] == len(firmware_response.content)
+        assert manifest["sha256"] == hashlib.sha256(
+            firmware_response.content
+        ).hexdigest()
+        assert "ESPLoader" in flasher_response.text
+        assert "ESPLoader" in script_response.text
+        assert 'from "/auth/esptool-js-v0.7.0.js"' in script_response.text
+        assert 'crypto.subtle.digest("SHA-256"' in script_response.text
+        assert "navigator.serial.requestPort" in script_response.text
+        assert firmware_response.headers["cache-control"] == "no-store"
+        assert flasher_response.headers["cache-control"].endswith("immutable")
 
     asyncio.run(run())

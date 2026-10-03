@@ -8,7 +8,13 @@ from urllib.parse import urlsplit
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request, status
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from fastapi.responses import (
+    FileResponse,
+    HTMLResponse,
+    JSONResponse,
+    RedirectResponse,
+    Response,
+)
 
 from lectio_gateway.auth.manager import (
     AuthFlowInProgress,
@@ -524,6 +530,7 @@ async def auth_browser(request: Request) -> HTMLResponse:
     th, td {{ border-bottom: 1px solid #ddd; padding: .45rem; text-align: left; vertical-align: top; }}
     #display-preview {{ border: 1px solid #777; display: block; height: auto; image-rendering: pixelated; max-width: 100%; }}
     #display-hash {{ overflow-wrap: anywhere; }}
+    #usb-flash-progress {{ display: block; margin: .75rem 0; width: 100%; }}
     @media (max-width: 720px) {{ .diagnostics-grid {{ grid-template-columns: 1fr; }} }}
   </style>
 </head>
@@ -560,9 +567,17 @@ async def auth_browser(request: Request) -> HTMLResponse:
       </div>
     </div>
   </section>
+  <section class="diagnostics" aria-labelledby="usb-flash-heading">
+    <h2 id="usb-flash-heading">Flash XIAO firmware</h2>
+    <p>The browser downloads the verified Lectio firmware from this service and flashes it directly to the connected XIAO ESP32-S3 over USB. This does not require PlatformIO on this computer. If the board is not detected, hold BOOT, tap RESET, release BOOT, then retry.</p>
+    <button id="usb-flash-firmware" type="button">Flash Lectio firmware</button>
+    <progress id="usb-flash-progress" max="100" value="0" hidden></progress>
+    <p id="usb-flash-status" role="status" aria-live="polite">Checking packaged firmware…</p>
+    <pre id="usb-flash-log" hidden></pre>
+  </section>
   <section class="diagnostics" aria-labelledby="usb-provisioning-heading">
     <h2 id="usb-provisioning-heading">USB device provisioning</h2>
-    <p>Use Web Serial to connect a previously flashed XIAO ESP32-S3 over USB. This requires Chrome or Edge in a secure page context such as localhost or HTTPS. Flash firmware separately using PlatformIO.</p>
+    <p>After flashing, use Web Serial to configure the board below. This requires Chrome or Edge in a secure page context such as localhost or HTTPS. Flashing and provisioning are separate steps.</p>
     <form id="usb-provisioning-form">
       <label for="usb-device-name">Device name</label>
       <input id="usb-device-name" name="name" value="Better Lectio display" maxlength="120" required>
@@ -685,6 +700,7 @@ async def auth_browser(request: Request) -> HTMLResponse:
     setInterval(refreshDiagnostics, 10000);
   </script>
   <script src="/auth/usb-provisioning.js" defer></script>
+  <script type="module" src="/auth/usb-flashing.js"></script>
 </body>
 </html>"""
     return HTMLResponse(
@@ -707,5 +723,61 @@ async def usb_provisioning_script() -> Response:
     return Response(
         script,
         media_type="application/javascript",
+        headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"},
+    )
+
+
+@app.get("/auth/usb-flashing.js", include_in_schema=False)
+async def usb_flashing_script() -> FileResponse:
+    script_path = Path(__file__).parent / "static" / "usb_flashing.js"
+    if not script_path.is_file():
+        raise HTTPException(status_code=503, detail="Firmware flasher is not packaged")
+    return FileResponse(
+        script_path,
+        media_type="application/javascript",
+        headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"},
+    )
+
+
+@app.get("/auth/esptool-js-v0.7.0.js", include_in_schema=False)
+async def esptool_js_bundle() -> FileResponse:
+    bundle_path = (
+        Path(__file__).parent / "static" / "vendor" / "esptool-js-v0.7.0.js"
+    )
+    if not bundle_path.is_file():
+        raise HTTPException(status_code=503, detail="Firmware flasher is not packaged")
+    return FileResponse(
+        bundle_path,
+        media_type="application/javascript",
+        headers={
+            "Cache-Control": "public, max-age=31536000, immutable",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
+@app.get("/auth/firmware/manifest.json", include_in_schema=False)
+async def lectio_firmware_manifest() -> FileResponse:
+    manifest_path = Path(__file__).parent / "static" / "firmware" / "manifest.json"
+    if not manifest_path.is_file():
+        raise HTTPException(status_code=503, detail="Lectio firmware is not packaged")
+    return FileResponse(
+        manifest_path,
+        media_type="application/json",
+        headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"},
+    )
+
+
+@app.get("/auth/firmware/lectio_s3_merged.bin", include_in_schema=False)
+async def lectio_firmware_binary() -> FileResponse:
+    firmware_path = (
+        Path(__file__).parent / "static" / "firmware" / "lectio_s3_merged.bin"
+    )
+    if not firmware_path.is_file():
+        raise HTTPException(status_code=503, detail="Lectio firmware is not packaged")
+    return FileResponse(
+        firmware_path,
+        media_type="application/octet-stream",
+        filename="lectio_s3_merged.bin",
         headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"},
     )

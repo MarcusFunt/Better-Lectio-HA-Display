@@ -1,7 +1,7 @@
 PYTHON ?= python3
 COMPOSE ?= docker compose
 
-.PHONY: install-dev install-provision-host test lint compose-config compose-build compose-up compose-down firmware-build firmware-flash provision-device
+.PHONY: install-dev install-provision-host test lint compose-config compose-build compose-up compose-down firmware-build firmware-web-package firmware-flash provision-device
 
 install-dev:
 	$(PYTHON) -m pip install -r requirements-dev.txt
@@ -31,6 +31,9 @@ compose-down:
 
 firmware-build:
 	pio run -d firmware -e lectio_s3
+
+firmware-web-package: firmware-build
+	$(PYTHON) -m tools.provision.package_web_firmware
 
 firmware-flash:
 	pio run -d firmware -e lectio_s3 -t upload

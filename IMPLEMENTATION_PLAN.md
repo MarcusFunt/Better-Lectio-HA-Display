@@ -9,7 +9,7 @@
 
 The current project has no Home Assistant runtime service, custom integration, HACS setup, private-calendar input, or HA credentials. The active Compose stack connects the Lectio Gateway directly to the Display Service and the display device.
 
-Implemented software includes manual Playwright/MitID session capture, optional student-ID entry, normalized per-source Lectio caching, the Copenhagen three-day timetable and prioritized sidebar, monochrome rendering, persistent content-addressed images, stale-data handling, hashed change review with exact-revision acknowledgement, the authenticated device API and registry, XIAO firmware, and both browser Web Serial and host-CLI USB provisioning. The README and architecture guide describe these active interfaces and defaults.
+Implemented software includes manual Playwright/MitID session capture, optional student-ID entry, normalized per-source Lectio caching, the Copenhagen three-day timetable and prioritized sidebar, monochrome rendering, persistent content-addressed images, stale-data handling, hashed change review with exact-revision acknowledgement, the authenticated device API and registry, XIAO firmware, browser Web Serial flashing and provisioning, and host-CLI flashing and provisioning. The README and architecture guide describe these active interfaces and defaults.
 
 ### Shortest remaining path to one working appliance
 
@@ -3440,3 +3440,29 @@ This plan assumes the selected separate-LAN-host Home Assistant setup, one XIAO 
 
 1. Reauthenticate if required, confirm fresh Lectio source data and a current bitmap, then flash/provision an attached XIAO and verify panel, acknowledgement, and recovery behavior.
 2. Review integration into `main` separately; remote access, backup/recovery, and redistribution licensing remain conditional follow-up items.
+
+### 2026-10-03 — Add browser firmware flashing for remote clients
+
+#### Evidence and findings
+
+- The existing `/auth/browser` page supported Web Serial credential/Wi-Fi provisioning, while firmware flashing required PlatformIO on the computer physically connected to USB.
+- The `lectio_s3` PlatformIO target builds an ESP32-S3 merged image with bootloader, partition table, and application at flash offset `0x0`. The successful local build produced a 1,238,160-byte merged image.
+- Remote flashing needs the backend to serve the firmware and flasher library from the same secure origin as the page; the client only needs a compatible browser, network access to that backend, and USB access to the board.
+
+#### Tasks completed
+
+- Added a separate browser flash step using vendored Espressif `esptool-js` 0.7.0. The browser fetches the packaged manifest and image, checks size and SHA-256, detects the chip before writing, reports progress, flashes the merged image, and then instructs the user to run the existing provisioning step.
+- Added same-origin gateway routes for the flasher module, vendor bundle, firmware manifest, and binary. Added `tools.provision.package_web_firmware` and `make firmware-web-package` to regenerate the checked-in image and integrity manifest after firmware changes. Included the vendor Apache-2.0 and bundled pako license notices.
+- Updated the active README and architecture guide with the browser flow, remote HTTPS requirement, packaging command, and separate flash/provision steps.
+
+#### How it went
+
+- Added the manifest and asset regression before implementation and confirmed it failed with HTTP 404. After implementation, the focused UI/asset tests passed; the full CI-matched Python suite passed (**185 passed**) and Ruff passed.
+- `node --check` passed for the flashing module and vendored Espressif bundle. `docker compose config --quiet` passed; the gateway image built, and an ephemeral container confirmed it contains the binary, manifest, scripts, and license files. `pio run -d firmware -e lectio_s3` succeeded and the packaging command produced the merged image and matching SHA-256 manifest.
+- PlatformIO emitted the existing non-fatal obsolete-core, dependency deprecation, and macro redefinition warnings. No Compose services were restarted and no USB-connected board, live browser flash, provisioning, or physical panel behavior was verified.
+
+#### Next steps
+
+1. Apply the new gateway image, then open `/auth/browser` from the USB computer over localhost or HTTPS and flash the board.
+2. Complete browser provisioning and verify device contact, panel output, acknowledgement, and recovery on the actual XIAO.
+3. Rebuild and repackage the browser image with `make firmware-web-package` whenever the firmware source changes.
